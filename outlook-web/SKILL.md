@@ -1,6 +1,6 @@
 ---
 name: outlook-web
-description: Read and manage Outlook email, calendar, and to-do via browser_extension on outlook.office.com. Use when user asks about email inbox, calendar schedule, meetings, tasks, or today's agenda in Outlook. Triggers on: "메일", "이메일", "캘린더", "일정", "미팅", "회의", "오늘 일정", "내일 일정", "이번 주 일정", "스케줄", "outlook", "inbox", "calendar", "schedule", "meeting", "what's on my calendar", "today's schedule", "agenda". Also triggers when user asks things like "오늘 뭐 있어?", "일정 뭐 있어?", "미팅 있어?" in the context of checking their work schedule.
+description: Read and manage Outlook email, calendar, and to-do via browser_extension on outlook.office.com. Triggers on: "outlook", "inbox", "calendar", "schedule", "meeting", "today's schedule", "agenda".
 trigger: manual
 platforms: [darwin, linux, win32]
 enabled: true
@@ -23,7 +23,7 @@ Read and manage Outlook email, calendar, and tasks through the Chrome browser ex
 All operations use `browser_extension` to interact with the Outlook Web App DOM.
 The Outlook tab must be active (navigated to) before `get_tree` works.
 
-**Account**: sanghwa@amazon.com
+**Account**: Configure your Outlook account in browser
 
 ## Finding the Outlook Tab
 

@@ -1,6 +1,6 @@
 ---
 name: drawio
-description: "Create and export draw.io diagrams (flowcharts, architecture diagrams, ER diagrams, sequence diagrams, class diagrams). Use when the user asks for any visual diagram, flowchart, or architecture drawing. Triggers on: diagram, drawio, flowchart, architecture diagram, ER diagram, sequence diagram, class diagram, 다이어그램, 플로우차트, 아키텍처 다이어그램."
+description: "Create and export draw.io diagrams (flowcharts, architecture diagrams, ER diagrams, sequence diagrams, class diagrams). Use when the user asks for any visual diagram, flowchart, or architecture drawing. Triggers on: diagram, drawio, flowchart, architecture diagram, ER diagram, sequence diagram, class diagram."
 ---
 
 # Draw.io Diagram Skill

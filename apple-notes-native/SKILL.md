@@ -14,7 +14,7 @@ Manage Apple Notes directly using osascript on macOS.
 - User wants to create a note in Apple Notes
 - User wants to read notes
 - User wants to search notes
-- User mentions "Apple Notes", "노트", "메모"
+- User mentions "Apple Notes", "notes", "memo"
 
 ## How to execute
 
