@@ -1,90 +1,97 @@
 ---
 name: kakaotalk
-description: Send and read KakaoTalk messages via batiflow-mcp (macOS only)
+description: Send and read KakaoTalk messages via BatiFlow CLI (macOS only)
 trigger: manual
 platforms: [darwin]
 tags: [messaging, kakaotalk, korean, batiflow]
+requires: [/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli]
 ---
 
 # KakaoTalk Messaging
 
-Send and read KakaoTalk messages using batiflow-mcp. Requires macOS with KakaoTalk desktop app installed and running.
+Send and read KakaoTalk messages using the BatiFlow CLI. Requires macOS with BatiFlow app and KakaoTalk desktop app installed.
 
-## Setup
+## Binary Path
 
-batiflow-mcp must be available. Install globally:
+The CLI is bundled inside the BatiFlow app:
 
-```bash
-npm install -g batiflow-mcp
+```
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli
 ```
 
-Or run directly with npx (auto-installs on first use):
-
-```bash
-npx batiflow-mcp
-```
+Use the full path in all `exec` commands. Alias as `batiflow` below for readability.
 
 ## Send a Message
 
-Use the `exec` tool to send a KakaoTalk message:
-
 ```bash
-npx batiflow-mcp send "Contact Name" "Hello from Foxl"
-```
-
-- Contact name must match exactly as shown in KakaoTalk (display name)
-- Supports Korean and other Unicode characters
-- Group chat names work too
-
-## Read Messages
-
-Read recent messages from a conversation:
-
-```bash
-npx batiflow-mcp read "Contact Name" --limit 50
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli send "Contact Name" "Hello from Foxl"
 ```
 
 Options:
-- `--limit N` - Number of messages to retrieve (default: 20)
-- Returns messages with sender, timestamp, and content
+- `--app kakao` (default) - KakaoTalk
+- `--app imessage` - iMessage
+- `--app slack` - Slack
+- `--dry-run` - simulate without sending
 
-## Send to Group Chat
+## Read Messages
 
 ```bash
-npx batiflow-mcp send "Group Chat Name" "Meeting at 3pm today"
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli read "Contact Name" --limit 50
 ```
 
-## How It Works
+Options:
+- `--limit N` - number of messages (default: 20)
+- `--json` - output as JSON
 
-batiflow-mcp uses macOS accessibility APIs to interact with the KakaoTalk desktop app. It:
+## List Chat Rooms
 
-1. Activates the KakaoTalk window
-2. Navigates to the target conversation
-3. Types and sends the message (or reads messages)
-4. Returns to the previous window
+```bash
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli chats --limit 30
+```
+
+## List Friends
+
+```bash
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli friends
+```
+
+## Send to iMessage or Slack
+
+```bash
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli send "John" "Hey" --app imessage
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli send "#general" "Deploy done" --app slack
+```
+
+## Check Status
+
+```bash
+/Applications/BatiFlow.app/Contents/MacOS/batiflow-cli status
+```
+
+Verifies accessibility permissions and app availability.
 
 ## Gotchas
 
 - KakaoTalk desktop app must be running and logged in
-- macOS only - uses AppleScript/accessibility APIs
-- First run may prompt for accessibility permissions (System Settings > Privacy & Security > Accessibility)
-- Contact names are case-sensitive and must match exactly
-- Sending to new contacts (not in recent chats) may fail - start a conversation manually first
-- There may be a brief visual flash as batiflow switches windows
+- macOS only - uses Accessibility API
+- First run prompts for accessibility permission (System Settings > Privacy & Security > Accessibility - grant to BatiFlow)
+- Contact/chat names must match exactly as displayed in KakaoTalk
+- There may be a brief window flash as BatiFlow interacts with the app
+- BatiFlow app must be installed from https://github.com/batiai/batiflow-releases/releases/latest
 
 ## Example Workflows
 
 ### Morning briefing to team
 ```
-Send a morning briefing to the "Team" KakaoTalk group with today's weather, calendar, and top 3 Slack messages.
+Send a morning briefing to the "Team" KakaoTalk group with today's weather and calendar.
 ```
 
-### Auto-reply when busy
+### Read and summarize
 ```
-Read the last 10 KakaoTalk messages from "Boss". If any are urgent, reply with "Checking now, will respond in 5 minutes."
+Read the last 50 messages from "Project Chat" on KakaoTalk, summarize key decisions.
 ```
 
-### Forward summary
+### Cross-platform notify
 ```
-Read the last 50 messages from "Project Chat" on KakaoTalk, summarize the key decisions, and send the summary to "Manager".
+Send "Deploy complete" to #engineering on Slack and "Team" on KakaoTalk.
 ```
