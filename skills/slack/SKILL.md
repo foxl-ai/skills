@@ -1,115 +1,70 @@
 ---
 name: slack
-description: Control Slack - send messages, react, manage pins
+description: "Slack messaging, search, reactions, and file uploads via the user's OAuth token. Triggers on: 'slack', 'send slack', 'search slack', 'slack thread', 'slack channel', 'dm on slack'."
+enabled: true
 trigger: manual
-requires: [slack-bot-token]
+tags: slack, messaging, search, reactions
+requires: [integration:slack]
+provides_tools: slack
+tool_module: registry
 ---
 
-# Slack Actions
+# Slack (User Token)
 
-Send messages, react, manage pins, and fetch member info via Slack API.
+Read and write Slack in the signed-in user's context. Matches Amazon Quick's
+slack-mcp tool surface (16 actions). Requires the user to connect their Slack
+account from **Settings → Integrations**.
 
-## Actions
+## Capabilities
 
-### React to a Message
+Dispatched via a single `slack` tool that takes an `action` parameter.
 
-```json
-{
-  "action": "react",
-  "channelId": "C123",
-  "messageId": "1712023032.1234",
-  "emoji": "✅"
-}
-```
+### Read (9 actions)
+- `whoami` - Current authenticated user info (user, team, url)
+- `search_messages` - Search across accessible messages (KQL-style query)
+- `get_recent_messages` - Recent @mentions + DMs directed at you
+- `channels_list` - Channels/groups/IMs the user belongs to
+- `conversations_history` - Full message history for a channel
+- `conversations_replies` - Replies in a message thread
+- `check_replies_batch` - For a batch of (channel, ts), did the user reply?
+- `users_lookup` - Find users by display name / alias / email
+- `attachment_get_data` - Download a file attachment (base64)
 
-### List Reactions
+### Write (5 actions)
+- `conversations_add_message` - Post a message to a channel or DM
+- `conversations_open` - Open a DM with one or more users
+- `reactions_add` - Add an emoji reaction
+- `reactions_remove` - Remove an emoji reaction
+- `file_upload` - Upload a file to a channel/DM/thread (external-upload flow)
 
-```json
-{
-  "action": "reactions",
-  "channelId": "C123",
-  "messageId": "1712023032.1234"
-}
-```
+### Other (2 actions)
+- `users_profile_get` - Get a user's full profile by user ID
+- `conversations_members` - List member user IDs in a channel
 
-### Send a Message
+## When to use
 
-```json
-{
-  "action": "sendMessage",
-  "to": "channel:C123",
-  "content": "Hello from Pilot"
-}
-```
+- User asks about Slack messages, threads, channels, DMs
+- User wants to send a Slack message, reaction, or file
+- User asks "who on Slack..." or "search Slack for..."
+- User wants to check if someone replied to a thread
 
-### Edit a Message
+## Setup
 
-```json
-{
-  "action": "editMessage",
-  "channelId": "C123",
-  "messageId": "1712023032.1234",
-  "content": "Updated text"
-}
-```
+1. Open Settings → Integrations in Foxl
+2. Click "Connect Slack"
+3. Authorize foxl's Slack app on your workspace (user-token scopes)
+4. Return to Foxl - the tool is now available
 
-### Delete a Message
+## Notes
 
-```json
-{
-  "action": "deleteMessage",
-  "channelId": "C123",
-  "messageId": "1712023032.1234"
-}
-```
+- All actions operate as the signed-in user (not as a bot) - `whoami` returns
+  your identity, `search_messages` searches what you can see, DMs post from you
+- The `channel` parameter accepts channel IDs (`C01234`, `D01234`)
+- `file_upload` uses Slack's newer external-upload flow (getUploadURLExternal +
+  completeUploadExternal) - works for all file sizes
 
-### Read Recent Messages
+## Replaces
 
-```json
-{
-  "action": "readMessages",
-  "channelId": "C123",
-  "limit": 20
-}
-```
-
-### Pin/Unpin Messages
-
-```json
-{
-  "action": "pinMessage",
-  "channelId": "C123",
-  "messageId": "1712023032.1234"
-}
-```
-
-```json
-{
-  "action": "unpinMessage",
-  "channelId": "C123",
-  "messageId": "1712023032.1234"
-}
-```
-
-### List Pinned Items
-
-```json
-{
-  "action": "listPins",
-  "channelId": "C123"
-}
-```
-
-### Member Info
-
-```json
-{
-  "action": "memberInfo",
-  "userId": "U123"
-}
-```
-
-## Ideas
-
-- React with ✅ to mark completed tasks
-- Pin key decisions or weekly status updates
+This skill replaces the previous bot-token Slack skill. The old version used a
+workspace bot token (`xoxb-`); the new one uses a user token (`xoxp-`) for
+proper per-user context matching Quick's spec.
