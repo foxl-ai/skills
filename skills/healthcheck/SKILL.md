@@ -2,7 +2,6 @@
 name: healthcheck
 description: Host security hardening and risk-tolerance configuration
 enabled: false
-trigger: manual
 ---
 
 # Host Healthcheck

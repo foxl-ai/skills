@@ -2,7 +2,6 @@
 name: sonos
 description: Control Sonos speakers - discover, play, volume, group
 enabled: false
-trigger: manual
 requires: [sonos]
 ---
 

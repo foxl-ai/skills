@@ -1,7 +1,6 @@
 ---
 name: browser-tool
 description: Browser automation via agent-browser CLI. Navigate, snapshot, click, fill, screenshot, extract content. Use for JS-heavy sites, SPAs, login-required pages, and any task requiring real browser interaction.
-trigger: manual
 enabled: true
 provides_tools: [browser, browser_extension]
 tool_module: registry

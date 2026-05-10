@@ -2,7 +2,6 @@
 name: outlook
 description: "Outlook email, calendar, and Microsoft To-Do via Microsoft Graph API. Triggers on: 'outlook', 'inbox', 'calendar', 'schedule', 'meeting', 'agenda', 'm365', 'microsoft 365', 'to-do', 'tasks'."
 enabled: true
-trigger: manual
 tags: outlook, email, calendar, meetings, tasks, microsoft, graph
 requires: [integration:microsoft]
 provides_tools: outlook

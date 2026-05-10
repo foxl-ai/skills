@@ -1,7 +1,6 @@
 ---
 name: "Research Assistant"
 description: "Help with research tasks and information gathering"
-trigger: manual
 enabled: true
 tags: research, search, analysis
 ---

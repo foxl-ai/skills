@@ -1,7 +1,6 @@
 ---
 name: notion
 description: Create and manage Notion pages, databases, and blocks via API
-trigger: manual
 enabled: true
 requires:
   env: ["NOTION_API_KEY"]

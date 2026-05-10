@@ -2,7 +2,6 @@
 name: "git-tool"
 description: "Git version control operations - status, diff, log, branch, checkout, commit, push, pull, add, stash"
 enabled: true
-trigger: manual
 tags: development, vcs, git
 requires: [git]
 provides_tools: git

@@ -2,7 +2,6 @@
 name: sherpa-onnx-tts
 description: Local text-to-speech via sherpa-onnx (offline, no cloud)
 enabled: false
-trigger: manual
 platforms: [darwin, linux, win32]
 requires: [SHERPA_ONNX_RUNTIME_DIR, SHERPA_ONNX_MODEL_DIR]
 ---

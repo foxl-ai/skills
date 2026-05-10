@@ -2,7 +2,6 @@
 name: voice-call
 description: Start voice calls via Twilio, Telnyx, or Plivo
 enabled: false
-trigger: manual
 requires: [voice-call-plugin]
 ---
 

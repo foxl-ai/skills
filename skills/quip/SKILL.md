@@ -2,7 +2,6 @@
 name: quip
 description: Manage Amazon Quip documents via REST API
 enabled: true
-trigger: manual
 tags: quip, documents, meeting-notes
 requires: [curl]
 always: true

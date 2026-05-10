@@ -1,7 +1,6 @@
 ---
 name: exec-tool
 description: Execute shell commands and manage background processes (npm, python, curl, etc.)
-trigger: manual
 enabled: true
 provides_tools: [exec, process]
 tool_module: exec

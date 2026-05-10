@@ -2,7 +2,6 @@
 name: coding-agent
 description: Run Codex CLI, Claude Code, or other coding agents via background process
 enabled: false
-trigger: manual
 requires: [claude, codex, opencode, pi]
 requiresAny: true
 ---

@@ -1,7 +1,6 @@
 ---
 name: web-fetch-tool
 description: Fetch content from URLs - web pages, APIs, and online resources
-trigger: manual
 enabled: true
 provides_tools: web_fetch
 tool_module: registry

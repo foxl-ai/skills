@@ -2,7 +2,6 @@
 name: video-frames
 description: Extract frames or clips from videos using ffmpeg
 enabled: false
-trigger: manual
 requires: [ffmpeg]
 ---
 

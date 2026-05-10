@@ -1,10 +1,7 @@
 ---
-name: obsidian
-description: Work with Obsidian vaults and notes using obsidian-cli
-trigger: manual
+name: "obsidian"
+description: "Work with Obsidian vaults and notes using obsidian-cli"
 enabled: true
-requires:
-  bins: ["obsidian-cli"]
 ---
 
 # Obsidian Skill

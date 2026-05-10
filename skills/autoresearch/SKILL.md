@@ -2,7 +2,6 @@
 name: autoresearch
 description: Run Karpathy's autoresearch, an autonomous AI agent that experiments with LLM training code. The agent modifies train.py, runs 5-minute training experiments, evaluates val_bpb, keeps improvements or discards failures, and loops indefinitely. Use when user wants to start autonomous ML research, check experiment results, or manage autoresearch runs.
 enabled: false
-trigger: manual
 tags: [ml, training, research, autonomous, karpathy]
 ---
 

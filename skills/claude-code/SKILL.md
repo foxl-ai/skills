@@ -2,7 +2,6 @@
 name: "claude-code"
 description: "Use Claude Code CLI with your Claude Pro/Max subscription"
 enabled: false
-trigger: manual
 ---
 
 # Claude Code CLI

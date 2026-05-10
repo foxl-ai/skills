@@ -1,7 +1,6 @@
 ---
 name: code-search-tool
 description: Search code files using grep or ripgrep for patterns, symbols, and functions
-trigger: manual
 enabled: true
 requires:
   anyBins: [rg, grep]

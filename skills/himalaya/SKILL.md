@@ -2,7 +2,6 @@
 name: himalaya
 description: CLI email client via IMAP/SMTP - list, read, write, reply, search
 enabled: false
-trigger: manual
 requires: [himalaya]
 ---
 

@@ -1,7 +1,6 @@
 ---
 name: weather
 description: Get current weather and forecasts using free services (no API key required)
-trigger: manual
 enabled: true
 ---
 

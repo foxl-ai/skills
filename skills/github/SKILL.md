@@ -1,7 +1,6 @@
 ---
 name: github
 description: Interact with GitHub using the gh CLI for issues, PRs, and CI runs
-trigger: manual
 enabled: true
 requires:
   bins: ["gh"]
