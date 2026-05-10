@@ -1,6 +1,7 @@
 ---
 name: gemini
 description: Gemini CLI for one-shot Q&A and generation
+enabled: false
 trigger: manual
 requires: [gemini]
 ---

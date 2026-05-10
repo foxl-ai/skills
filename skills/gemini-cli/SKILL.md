@@ -1,7 +1,7 @@
 ---
 name: "gemini-cli"
 description: "Use Gemini CLI with your Google AI subscription or API key"
-enabled: true
+enabled: false
 trigger: manual
 ---
 

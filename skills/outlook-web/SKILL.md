@@ -3,7 +3,7 @@ name: outlook-web
 description: "Legacy browser-extension Outlook skill (superseded by 'outlook'). Only used as fallback when the Graph API integration is unavailable."
 trigger: manual
 platforms: [darwin, linux, win32]
-enabled: false
+enabled: true
 tags: outlook, email, calendar, browser-fallback, legacy
 ---
 

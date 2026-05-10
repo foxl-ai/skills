@@ -1,7 +1,7 @@
 ---
 name: "codex-cli"
 description: "Use Codex CLI with your OpenAI subscription"
-enabled: true
+enabled: false
 trigger: manual
 ---
 

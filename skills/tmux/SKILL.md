@@ -1,6 +1,7 @@
 ---
 name: tmux
 description: Remote-control tmux sessions for interactive CLIs
+enabled: false
 trigger: manual
 platforms: [darwin, linux]
 requires: [tmux]

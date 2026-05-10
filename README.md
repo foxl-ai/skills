@@ -1,6 +1,8 @@
 # Foxl Skills
 
-Skills are folders of instructions, scripts, and resources that Foxl loads dynamically to improve performance on specialized tasks. Each skill teaches the agent how to complete specific tasks in a repeatable way.
+Skills are folders of instructions, scripts, and resources that Foxl loads
+dynamically to improve performance on specialized tasks. Each skill teaches
+the agent how to complete specific tasks in a repeatable way.
 
 ## Structure
 
@@ -20,7 +22,7 @@ description: What this skill does and when to trigger it
 trigger: auto | manual
 tags: tag1, tag2
 requires: [curl, python3]
-always: false
+enabled: true
 ---
 
 # My Skill
@@ -36,41 +38,41 @@ Instructions for the agent to follow when this skill is active.
 | `description` | Yes | What the skill does and trigger conditions |
 | `trigger` | No | `auto` (keyword-activated) or `manual` (explicit invocation) |
 | `tags` | No | Comma-separated tags for categorization |
-| `requires` | No | System dependencies needed |
-| `always` | No | If `true`, skill is always loaded into agent context |
+| `requires` | No | System dependencies needed (CLI bins or env vars) |
+| `enabled` | No | If `false`, skill ships disabled until the user opts in |
 
-## Included Skills (69)
+## Included Skills (35)
+
+### Featured
+
+`notion` `obsidian` `github` `gws` `weather`
 
 ### Productivity
-`apple-notes` `apple-notes-native` `apple-reminders` `bear-notes` `notion` `obsidian` `outlook-web` `quip` `things-mac` `trello`
+
+`outlook` `outlook-web` `quip` `pdf` `pptx` `xlsx` `docx` `research-assistant`
 
 ### Communication
-`discord` `himalaya` `imsg` `slack`
 
-### Development
-`browser-tool` `code-review` `code-search-tool` `coding-agent` `drawio` `exec-tool` `gemini` `git-tool` `github` `electron` `kiro-send-tool`
+`himalaya`
 
-### Media
-`apple-photos` `camsnap` `gifgrep` `openai-image-gen` `peekaboo` `songsee` `video-frames` `voice-call` `whisper` `whisper-api`
+### Dev Tools
 
-### Documents
-`docx` `pdf` `pptx` `xlsx` `nano-pdf`
+`exec-tool` `git-tool` `code-search-tool` `web-fetch-tool` `browser-tool`
+`skill-creator` `codex-cli` `claude-code` `coding-agent` `gemini` `gemini-cli`
+`electron`
 
-### Research & Analysis
-`autoresearch` `blogwatcher` `research-assistant` `summarize` `web-fetch-tool`
+### Media & Content
 
-### Smart Home & Local
-`food-order` `goplaces` `local-places` `openhue` `sonos` `spotify` `spotify-player` `weather`
+`spotify` `spotify-player` `sonos` `video-frames` `sherpa-onnx-tts`
 
-### System & Utilities
-`blucli` `eightctl` `healthcheck` `mcporter` `mole` `nano-banana-pro` `oracle` `sag` `session-logs` `sherpa-onnx-tts` `tmux` `wacli`
+### Automation
 
-### Agents
-`morning-briefing` `bird` `gog`
+`voice-call` `tmux` `autoresearch` `healthcheck`
 
 ## Installation
 
-Foxl automatically loads skills from the `data/skills/` directory. To get the latest skills:
+Foxl automatically loads skills from the `data/skills/` directory. To get the
+latest skills:
 
 ```bash
 cd /path/to/foxl/data
@@ -83,6 +85,12 @@ To update:
 cd /path/to/foxl/data/skills
 git pull
 ```
+
+Foxl also syncs this repo automatically on startup — the app calls
+`POST /api/skills/sync` into a shallow clone under `data/skills/.git-repo/`
+and merges new/updated skills into the local skills directory. Skills a user
+has deleted locally stay deleted; skills the user has edited locally are
+preserved (not overwritten by the pull).
 
 ## Creating Custom Skills
 

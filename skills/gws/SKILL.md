@@ -1,6 +1,7 @@
 ---
 name: gws
 description: Google Workspace CLI - Gmail, Calendar, Drive, Sheets, Docs, Chat, Tasks, Meet, and more
+enabled: true
 trigger: manual
 requires: [gws]
 ---

@@ -1,6 +1,7 @@
 ---
 name: spotify-player
 description: Terminal Spotify playback and search via spogo or spotify_player
+enabled: false
 trigger: manual
 requires: [spogo, spotify_player]
 requiresAny: true

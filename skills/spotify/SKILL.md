@@ -2,7 +2,7 @@
 name: spotify
 description: Control Spotify playback and search via terminal
 trigger: manual
-enabled: true
+enabled: false
 requires:
   anyBins: ["spogo", "spotify_player"]
 ---
