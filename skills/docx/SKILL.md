@@ -15,42 +15,168 @@ A .docx file is a ZIP archive containing XML files.
 
 | Task | Approach |
 |------|----------|
-| Read/analyze content | `pandoc` or unpack for raw XML |
+| Read/analyze content | `officecli view` - see Reading Content below |
+| SEE the rendered document | `officecli view <file> screenshot` / `html` - see Rendering below |
 | Create new document | Use `docx-js` - see Creating New Documents below |
 | Edit existing document | Unpack → edit XML → repack - see Editing Existing Documents below |
 
-### Converting .doc to .docx
+### OfficeCLI (the primary read/render tool)
 
-Legacy `.doc` files must be converted before editing:
+`officecli` is a single self-contained binary that reads and renders .docx
+directly. It does NOT need LibreOffice, Word, or any Office install. Verify
+it is present before relying on it:
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to docx document.doc
+officecli --version
 ```
+
+If it is missing, install it (then open a new shell if the binary is still not
+found):
+
+```bash
+# macOS / Linux
+curl -fsSL https://d.officecli.ai/install.sh | bash
+# Windows (PowerShell)
+irm https://d.officecli.ai/install.ps1 | iex
+```
+
+Only `.docx` is supported. Legacy binary `.doc` is NOT (see Legacy .doc below).
 
 ### Reading Content
 
 ```bash
-# Text extraction with tracked changes
-pandoc --track-changes=all document.docx -o output.md
+# Plain text (paginate with --start/--end, cap with --max-lines)
+officecli view document.docx text
+officecli view document.docx text --start 1 --end 50
 
-# Raw XML access
+# Heading hierarchy / document structure
+officecli view document.docx outline
+
+# Text WITH formatting annotations (font, size, bold, style; equations as LaTeX)
+officecli view document.docx annotated
+
+# Machine-readable tree, one node and its children
+officecli get document.docx /body --depth 1 --json
+
+# Find things: CSS-like selectors
+officecli query document.docx 'run:contains("TODO")'
+
+# Document problems (overflow, missing alt text, ...)
+officecli view document.docx issues --json
+
+# Raw XML access (when you need to hand-edit - see Editing Existing Documents)
 python scripts/office/unpack.py document.docx unpacked/
 ```
 
-### Converting to Images
+### Rendering (this is how you SEE the document)
+
+`officecli` renders the real document layout, so you can look at your own
+output and fix what is visibly wrong. Prefer this over converting to PDF.
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to pdf document.docx
-pdftoppm -jpeg -r 150 document.pdf page
+# PNG you can open and inspect. -o is REQUIRED for a predictable path;
+# without it officecli writes a random temp file and prints the path.
+officecli view document.docx screenshot -o /tmp/page1.png
+
+# Specific pages (docx uses --page; comma list or range)
+officecli view document.docx screenshot --page 1,3,5 -o /tmp/pages.png
+officecli view document.docx screenshot --page 2-5 -o /tmp/pages.png
+
+# Contact sheet: every page tiled into ONE image
+officecli view document.docx screenshot --grid -o /tmp/contact.png
+officecli view document.docx screenshot --grid 4 -o /tmp/contact.png
+
+# Bigger raster (default 1600x1200)
+officecli view document.docx screenshot --screenshot-width 1920 -o /tmp/page.png
+
+# Static HTML snapshot (assets inlined, single file)
+officecli view document.docx html -o /tmp/document.html
+
+# Live preview that auto-refreshes on every officecli edit
+officecli watch document.docx        # http://localhost:26315
+officecli unwatch document.docx
 ```
 
-### Accepting Tracked Changes
+**`screenshot` writes ONE PNG, never a numbered series.** A `--page` range is
+composed into that single image, and `--grid` tiles it. There is no
+`page-01.png, page-02.png` output mode - if you want one file per page, run
+the command once per page with a different `-o`.
 
-To produce a clean document with all tracked changes accepted (requires LibreOffice):
+PNG capture needs a headless browser on the machine (Playwright / Chrome /
+Edge / Firefox, auto-detected). The renderer itself is built in; only the
+capture step needs the browser. `--render native` (real Word rasterization)
+is Windows-only and errors elsewhere with `native_unavailable`.
+
+### Verification Loop
+
+After writing a .docx, look at it before declaring success:
+
+1. `officecli validate document.docx` - schema check (structure only)
+2. `officecli view document.docx issues --json` - content/format problems
+3. `officecli view document.docx screenshot --grid -o /tmp/check.png` - then
+   READ the image and list what is wrong
+4. Fix, re-render, re-read. Do not declare success on the first pass.
+
+**Flush before a non-officecli program reads the file.** officecli keeps a
+resident process, so python-docx / a validator / an upload may otherwise read
+a stale file on disk:
+
+```bash
+officecli save document.docx    # flush, keep resident warm
+officecli close document.docx   # flush + release
+```
+
+### Tracked Changes
+
+`officecli` reads and applies revisions directly - no LibreOffice, no macro.
+
+```bash
+# Read revisions (query selectors are UNPREFIXED - no leading slash)
+officecli query document.docx revision
+officecli query document.docx 'revision[revision.author=Alice]'
+officecli query document.docx 'revision[revision.type=ins]'
+
+# Accept / reject EVERYTHING (set paths DO take the leading slash)
+officecli set document.docx /revision --prop revision.action=accept
+officecli set document.docx /revision --prop revision.action=reject
+
+# Accept / reject a subset
+officecli set document.docx '/revision[@author=Alice]' --prop revision.action=accept
+officecli set document.docx '/revision[@type=del]' --prop revision.action=reject
+
+# Turn the tracking MODE on (distinct from the revision data)
+officecli set document.docx /settings --prop trackRevisions=true
+```
+
+Covers ins, del, format, moveFrom, moveTo, paraMarkIns, rPrChange, pPrChange,
+sectPrChange, and the table-property changes. Use `revision.*` keys - the
+legacy `trackChange.*` keys were removed with no alias. `revision.action`
+cannot be combined with a creation key in one call.
+
+`officecli set` edits IN PLACE. To keep the original and write a clean copy,
+use the wrapper (it copies first, applies, then flushes the resident):
 
 ```bash
 python scripts/accept_changes.py input.docx output.docx
+python scripts/accept_changes.py input.docx output.docx --reject
 ```
+
+### Legacy .doc, and real PDF output
+
+Neither is available through `officecli`, and neither is faked here:
+
+- **`.doc` / `.rtf` (pre-2007 binary or RTF)**: `officecli` supports exactly
+  `.docx`, `.xlsx`, `.pptx`. Reading `.doc` needs a format-handler plugin that
+  is not published. Ask the user to re-save as `.docx`, or convert it with
+  whatever converter the machine actually has (`soffice --headless
+  --convert-to docx file.doc` if LibreOffice happens to be installed, or
+  `pandoc`). Do NOT assume LibreOffice exists - check with
+  `command -v soffice` first.
+- **PDF export**: `officecli view <file> pdf` requires an `exporter` plugin
+  that is NOT shipped with the binary and has no published installer, so treat
+  PDF as unavailable. If the deliverable must be a PDF, say so and ask how the
+  user wants it produced. For *looking at* the document, use `screenshot` /
+  `html` above - going through PDF buys nothing.
 
 ---
 
@@ -585,7 +711,14 @@ After running `comment.py` (see Step 2), add markers to document.xml. For replie
 
 ## Dependencies
 
-- **pandoc**: Text extraction
-- **docx**: `npm install -g docx` (new documents)
-- **LibreOffice**: PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
-- **Poppler**: `pdftoppm` for images
+- **officecli**: reading, rendering (PNG/HTML), tracked changes, validation.
+  `curl -fsSL https://d.officecli.ai/install.sh | bash` - verify with
+  `officecli --version`. This is the primary tool.
+- **a headless browser** (Playwright / Chrome / Edge / Firefox): only needed
+  for `view ... screenshot`; auto-detected.
+- **docx**: `npm install -g docx` (creating new documents with docx-js)
+- **python**: `scripts/office/{unpack,pack,validate}.py` for raw-XML editing
+
+Not required: LibreOffice, Word, Poppler/`pdftoppm`, pandoc. If a task genuinely
+needs a legacy `.doc` conversion or a real PDF, see "Legacy .doc, and real PDF
+output" above - check what the machine has instead of assuming.

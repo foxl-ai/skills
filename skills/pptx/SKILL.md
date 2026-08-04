@@ -11,24 +11,63 @@ license: Proprietary. LICENSE.txt has complete terms
 
 | Task | Guide |
 |------|-------|
-| Read/analyze content | `python -m markitdown presentation.pptx` |
+| Read/analyze content | `officecli view deck.pptx outline` / `text` |
+| SEE the slides | `officecli view deck.pptx screenshot --grid` - see Rendering |
 | Edit or create from template | Read [editing.md](editing.md) |
 | Create from scratch | Read [pptxgenjs.md](pptxgenjs.md) |
+
+---
+
+## OfficeCLI (the primary read/render tool)
+
+`officecli` is a single self-contained binary that reads and renders .pptx
+directly. No LibreOffice, no PowerPoint, no Office install. Verify first:
+
+```bash
+officecli --version
+```
+
+If missing, install it (open a new shell if the binary still is not found):
+
+```bash
+# macOS / Linux
+curl -fsSL https://d.officecli.ai/install.sh | bash
+# Windows (PowerShell)
+irm https://d.officecli.ai/install.ps1 | iex
+```
+
+Supported formats are exactly `.docx`, `.xlsx`, `.pptx` - legacy `.ppt` is not.
 
 ---
 
 ## Reading Content
 
 ```bash
-# Text extraction
-python -m markitdown presentation.pptx
+# Structure: slide count, titles, shape/picture counts per slide
+officecli view presentation.pptx outline
 
-# Visual overview
-python scripts/thumbnail.py presentation.pptx
+# Plain text
+officecli view presentation.pptx text
+
+# Everything on one slide, as structured data
+officecli get presentation.pptx '/slide[1]' --depth 1 --json
+
+# Find shapes by property
+officecli query presentation.pptx 'shape[fill=FF0000]'
+
+# Problems (text overflow, missing alt text, low contrast)
+officecli view presentation.pptx issues --json
+
+# Visual overview - see Rendering below
+officecli view presentation.pptx screenshot --grid -o /tmp/overview.png
 
 # Raw XML
 python scripts/office/unpack.py presentation.pptx unpacked/
 ```
+
+Quote bracketed paths in bash/zsh (`'/slide[1]'`) - the shell glob-expands
+brackets otherwise. `shape[1]` is usually the title placeholder; content shapes
+start at `shape[2]`.
 
 ---
 
@@ -165,7 +204,7 @@ If grep returns results, fix them before declaring success.
 
 **⚠️ USE SUBAGENTS** — even for 2-3 slides. You've been staring at the code and will see what you expect, not what's there. Subagents have fresh eyes.
 
-Convert slides to images (see [Converting to Images](#converting-to-images)), then use this prompt:
+Render the slides to images (see [Rendering](#rendering-this-is-how-you-see-the-slides)), then use this prompt:
 
 ```
 Visually inspect these slides. Assume there are issues — find them.
@@ -187,47 +226,115 @@ Look for:
 For each slide, list issues or areas of concern, even if minor.
 
 Read and analyze these images:
-1. /path/to/slide-01.jpg (Expected: [brief description])
-2. /path/to/slide-02.jpg (Expected: [brief description])
+1. /tmp/slide-1.png (Expected: [brief description])
+2. /tmp/slide-2.png (Expected: [brief description])
 
 Report ALL issues found, including minor ones.
 ```
 
 ### Verification Loop
 
-1. Generate slides → Convert to images → Inspect
+1. Generate slides → render to PNG (`officecli view ... screenshot`) → inspect
 2. **List issues found** (if none found, look again more critically)
 3. Fix issues
-4. **Re-verify affected slides** — one fix often creates another problem
+4. **Re-verify affected slides** — one fix often creates another problem.
+   Re-render just the slide you touched:
+   `officecli view output.pptx screenshot --start N --end N -o /tmp/slide-N.png`
 5. Repeat until a full pass reveals no new issues
+
+Run `officecli view output.pptx issues --json` alongside the visual pass - it
+catches text overflow, missing alt text and low contrast mechanically. It does
+NOT replace looking at the slides.
 
 **Do not declare success until you've completed at least one fix-and-verify cycle.**
 
+**Re-render, do not trust a cached image.** A stale PNG at the same path reads
+as a passing check. Write to a fresh `-o` path (or delete the old file first)
+whenever you re-verify.
+
 ---
 
-## Converting to Images
+## Rendering (this is how you SEE the slides)
 
-Convert presentations to individual slide images for visual inspection:
+`officecli` renders the real slide layout, so you can look at your own deck and
+fix what is visibly wrong. This replaces the old PDF-then-rasterize two-step -
+do not convert to PDF just to look at slides.
 
 ```bash
-python scripts/office/soffice.py --headless --convert-to pdf output.pptx
-pdftoppm -jpeg -r 150 output.pdf slide
+# ONE slide (default is slide 1)
+officecli view output.pptx screenshot -o /tmp/slide-01.png
+
+# A specific slide
+officecli view output.pptx screenshot --start 3 --end 3 -o /tmp/slide-03.png
+
+# Contact sheet: every slide tiled into ONE image, for a whole-deck pass
+officecli view output.pptx screenshot --grid -o /tmp/overview.png
+officecli view output.pptx screenshot --grid 4 -o /tmp/overview.png
+
+# A slide range, wider raster (default 1600x1200)
+officecli view output.pptx screenshot --start 1 --end 4 --grid 2 \
+  --screenshot-width 1920 -o /tmp/first-four.png
+
+# Crop to one shape
+officecli view output.pptx screenshot --range '/slide[1]/shape[@id=100000]' -o /tmp/shape.png
+
+# Vector render of a single slide (sharpest for text/equation checks).
+# NOTE: svg mode ignores -o and writes to STDOUT - redirect it yourself.
+officecli view output.pptx svg --start 3 --end 3 > /tmp/slide-03.svg
+
+# Static HTML snapshot, or a live auto-refreshing preview
+officecli view output.pptx html -o /tmp/deck.html
+officecli watch output.pptx        # http://localhost:26315
+officecli unwatch output.pptx
 ```
 
-This creates `slide-01.jpg`, `slide-02.jpg`, etc.
-
-To re-render specific slides after fixes:
+**`screenshot` writes ONE PNG, never a numbered series.** A `--start/--end`
+range is stacked vertically into that single image and `--grid` tiles it - there
+is no `slide-01.png, slide-02.png` output mode. For per-slide files, loop:
 
 ```bash
-pdftoppm -jpeg -r 150 -f N -l N output.pdf slide-fixed
+for i in $(seq 1 12); do
+  officecli view output.pptx screenshot --start $i --end $i -o /tmp/slide-$i.png
+done
+```
+
+`-o` is effectively required: with no `-o`, officecli writes a random temp file
+and prints its path. PNG capture needs a headless browser on the machine
+(Playwright / Chrome / Edge / Firefox, auto-detected); the renderer itself is
+built in. `--render native` (real PowerPoint rasterization) is Windows-only and
+errors elsewhere with `native_unavailable`.
+
+**Flush before a non-officecli program reads the deck.** officecli keeps a
+resident process, so python-pptx / an upload / a validator may otherwise read a
+stale file:
+
+```bash
+officecli save output.pptx     # flush, keep resident warm
+officecli close output.pptx    # flush + release
+```
+
+Also worth running on a finished deck:
+
+```bash
+officecli validate output.pptx            # OpenXML schema (structure only)
+officecli view output.pptx issues --json   # overflow, missing alt text, contrast
 ```
 
 ---
 
 ## Dependencies
 
-- `pip install "markitdown[pptx]"` - text extraction
-- `pip install Pillow` - thumbnail grids
-- `npm install -g pptxgenjs` - creating from scratch
-- LibreOffice (`soffice`) - PDF conversion (auto-configured for sandboxed environments via `scripts/office/soffice.py`)
-- Poppler (`pdftoppm`) - PDF to images
+- **officecli**: reading, rendering (PNG/SVG/HTML), validation.
+  `curl -fsSL https://d.officecli.ai/install.sh | bash` - verify with
+  `officecli --version`. This is the primary tool.
+- **a headless browser** (Playwright / Chrome / Edge / Firefox): only for
+  `view ... screenshot`; auto-detected.
+- `npm install -g pptxgenjs` - creating decks from scratch
+- `pip install Pillow` - only if you build custom thumbnail grids yourself
+  (`officecli view ... screenshot --grid` already makes contact sheets)
+- `pip install "markitdown[pptx]"` - optional alternative text extraction
+  (`officecli view ... text` covers this)
+
+Not required: LibreOffice, PowerPoint, Poppler/`pdftoppm`. Legacy `.ppt` is not
+supported by officecli - ask for a `.pptx`, and do not assume a converter
+exists (`command -v soffice` first if you must try).

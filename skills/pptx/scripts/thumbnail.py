@@ -16,6 +16,7 @@ Examples:
 """
 
 import argparse
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -23,11 +24,10 @@ import zipfile
 from pathlib import Path
 
 import defusedxml.minidom
-from office.soffice import get_soffice_env
 from PIL import Image, ImageDraw, ImageFont
 
 THUMBNAIL_WIDTH = 300
-CONVERSION_DPI = 100
+SCREENSHOT_WIDTH = 1280
 MAX_COLS = 6
 DEFAULT_COLS = 3
 JPEG_QUALITY = 95
@@ -68,12 +68,34 @@ def main():
 
     output_path = Path(f"{args.output_prefix}.jpg")
 
+    if shutil.which("officecli") is None:
+        print(
+            "Error: officecli not found. Install it with:\n"
+            "  curl -fsSL https://d.officecli.ai/install.sh | bash\n"
+            "  (Windows PowerShell: irm https://d.officecli.ai/install.ps1 | iex)",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # CRITICAL: flush first. officecli keeps edited decks in a resident process,
+    # and get_slide_info() reads the .pptx ZIP straight off disk - without this
+    # a deck just built with `officecli add` reports "No slides found".
+    subprocess.run(
+        ["officecli", "save", str(input_path.absolute())],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
     try:
         slide_info = get_slide_info(input_path)
 
+        visible_count = sum(1 for s in slide_info if not s["hidden"])
+
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
-            visible_images = convert_to_images(input_path, temp_path)
+            visible_images = convert_to_images(input_path, temp_path, visible_count)
 
             if not visible_images and not any(s["hidden"] for s in slide_info):
                 print("Error: No slides found", file=sys.stderr)
@@ -102,8 +124,18 @@ def get_slide_info(pptx_path: Path) -> list[dict]:
             rid = rel.getAttribute("Id")
             target = rel.getAttribute("Target")
             rel_type = rel.getAttribute("Type")
-            if "slide" in rel_type and target.startswith("slides/"):
-                rid_to_slide[rid] = target.replace("slides/", "")
+            # Match the slide relationship type exactly - "slide" as a substring
+            # also matches slideMaster and slideLayout.
+            if not rel_type.endswith("/slide"):
+                continue
+            # Target may be relative to ppt/ ("slides/slide1.xml") OR an
+            # absolute part name ("/ppt/slides/slide1.xml"). Both are valid OPC;
+            # officecli writes the absolute form, PowerPoint writes the relative
+            # one. Keying on the basename handles both.
+            normalized = target.replace("\\", "/").rstrip("/")
+            if "/slides/" not in f"/{normalized.lstrip('/')}" and not normalized.startswith("slides/"):
+                continue
+            rid_to_slide[rid] = normalized.rsplit("/", 1)[-1]
 
         pres_content = zf.read("ppt/presentation.xml").decode("utf-8")
         pres_dom = defusedxml.minidom.parseString(pres_content)
@@ -111,11 +143,33 @@ def get_slide_info(pptx_path: Path) -> list[dict]:
         slides = []
         for sld_id in pres_dom.getElementsByTagName("p:sldId"):
             rid = sld_id.getAttribute("r:id")
-            if rid in rid_to_slide:
-                hidden = sld_id.getAttribute("show") == "0"
-                slides.append({"name": rid_to_slide[rid], "hidden": hidden})
+            if rid not in rid_to_slide:
+                continue
+            name = rid_to_slide[rid]
+            # A hidden slide is `show="0"`. Per the OOXML spec that attribute
+            # lives on the SLIDE's own <p:sld> root (what officecli and
+            # PowerPoint write); some writers also mirror it onto <p:sldId>.
+            # Check both, or hidden slides are silently rendered as visible and
+            # every later slide gets the wrong label.
+            hidden = sld_id.getAttribute("show") == "0"
+            if not hidden:
+                hidden = _slide_marked_hidden(zf, name)
+            slides.append({"name": name, "hidden": hidden})
 
         return slides
+
+
+def _slide_marked_hidden(zf: zipfile.ZipFile, slide_name: str) -> bool:
+    try:
+        slide_xml = zf.read(f"ppt/slides/{slide_name}").decode("utf-8")
+    except KeyError:
+        return False
+
+    dom = defusedxml.minidom.parseString(slide_xml)
+    roots = dom.getElementsByTagName("p:sld") or dom.getElementsByTagName("sld")
+    if not roots:
+        return False
+    return roots[0].getAttribute("show") == "0"
 
 
 def build_slide_list(
@@ -155,42 +209,51 @@ def create_hidden_placeholder(size: tuple[int, int]) -> Image.Image:
     return img
 
 
-def convert_to_images(pptx_path: Path, temp_dir: Path) -> list[Path]:
-    pdf_path = temp_dir / f"{pptx_path.stem}.pdf"
+def convert_to_images(pptx_path: Path, temp_dir: Path, visible_count: int) -> list[Path]:
+    """Render each VISIBLE slide to its own PNG via officecli.
 
-    result = subprocess.run(
-        [
-            "soffice",
-            "--headless",
-            "--convert-to",
-            "pdf",
-            "--outdir",
-            str(temp_dir),
-            str(pptx_path),
-        ],
-        capture_output=True,
-        text=True,
-        env=get_soffice_env(),
-    )
-    if result.returncode != 0 or not pdf_path.exists():
-        raise RuntimeError("PDF conversion failed")
+    officecli's `view ... screenshot` writes exactly ONE image per invocation
+    (a --start/--end range is composed into that single file), so a per-slide
+    series needs one call per slide. --start/--end index VISIBLE slides only,
+    which matches what this function is expected to return.
+    """
+    if shutil.which("officecli") is None:
+        raise RuntimeError(
+            "officecli not found. Install it with:\n"
+            "  curl -fsSL https://d.officecli.ai/install.sh | bash\n"
+            "(Windows: irm https://d.officecli.ai/install.ps1 | iex)"
+        )
 
-    result = subprocess.run(
-        [
-            "pdftoppm",
-            "-jpeg",
-            "-r",
-            str(CONVERSION_DPI),
-            str(pdf_path),
-            str(temp_dir / "slide"),
-        ],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError("Image conversion failed")
+    images: list[Path] = []
+    for index in range(1, visible_count + 1):
+        out_path = temp_dir / f"slide-{index:03d}.png"
+        result = subprocess.run(
+            [
+                "officecli",
+                "view",
+                str(pptx_path),
+                "screenshot",
+                "--start",
+                str(index),
+                "--end",
+                str(index),
+                "--screenshot-width",
+                str(SCREENSHOT_WIDTH),
+                "-o",
+                str(out_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0 or not out_path.exists():
+            detail = (result.stderr or result.stdout or "").strip()
+            raise RuntimeError(
+                f"officecli failed to render slide {index}"
+                + (f": {detail}" if detail else "")
+            )
+        images.append(out_path)
 
-    return sorted(temp_dir.glob("slide-*.jpg"))
+    return images
 
 
 def create_grids(

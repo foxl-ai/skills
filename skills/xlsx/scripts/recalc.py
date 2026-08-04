@@ -1,6 +1,21 @@
 """
-Excel Formula Recalculation Script
-Recalculates all formulas in an Excel file using LibreOffice
+Excel Formula Recalculation Script (LibreOffice FALLBACK)
+
+Recalculates every formula in every sheet using LibreOffice, then scans all
+cells for Excel errors.
+
+PREFER officecli, which needs no LibreOffice and is the documented default:
+    officecli set file.xlsx /Sheet1/B10 --prop formula="=SUM(B2:B9)"   # evaluates on write
+    officecli get file.xlsx /Sheet1/B10 --json                          # cachedValue/computedValue
+    officecli view file.xlsx issues --json                              # error + stale-cache scan
+
+Use THIS script only when you specifically need a whole-workbook
+calculateAll() by a real spreadsheet engine AND LibreOffice is installed.
+It requires `soffice` on PATH, which is usually absent - check first:
+    command -v soffice && python scripts/recalc.py output.xlsx 30
+
+Note: scripts/office/soffice.py's sandbox shim is Linux-only (LD_PRELOAD +
+gcc), so on macOS/Windows this works only if soffice is already on PATH.
 """
 
 import json

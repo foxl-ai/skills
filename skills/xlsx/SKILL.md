@@ -72,9 +72,63 @@ A user may ask you to create, edit, or analyze the contents of an .xlsx file. Yo
 
 ## Important Requirements
 
-**LibreOffice Required for Formula Recalculation**: You can assume LibreOffice is installed for recalculating formula values using the `scripts/recalc.py` script. The script automatically configures LibreOffice on first run, including in sandboxed environments where Unix sockets are restricted (handled by `scripts/office/soffice.py`)
+**Use `officecli` for formula values, and for looking at the sheet.** It is a
+single self-contained binary that evaluates Excel formulas itself (350+
+functions) and renders the workbook - no LibreOffice, no Excel, no Office
+install. Verify it is present before relying on it:
+
+```bash
+officecli --version
+```
+
+If missing, install it (open a new shell if the binary still is not found):
+
+```bash
+# macOS / Linux
+curl -fsSL https://d.officecli.ai/install.sh | bash
+# Windows (PowerShell)
+irm https://d.officecli.ai/install.ps1 | iex
+```
+
+Supported formats are exactly `.docx`, `.xlsx`, `.pptx`. Legacy `.xls` is NOT
+supported - ask for an `.xlsx`. `.csv`/`.tsv` are handled with pandas, or
+imported with `officecli import`.
+
+**Do NOT assume LibreOffice exists.** It is not installed on most machines this
+skill runs on, and nothing here installs it.
 
 ## Reading and analyzing data
+
+### Reading with officecli
+
+Fastest way to see what is actually in a workbook, including COMPUTED formula
+values:
+
+```bash
+# Structure: sheets, dimensions, formula counts
+officecli view file.xlsx outline
+
+# Cell values as text (A1=value, tab-separated; empty cells omitted)
+officecli view file.xlsx text
+officecli view file.xlsx text --cols A,B,C --max-lines 50
+officecli view file.xlsx text --range "Sheet1!A1:C10"
+
+# One cell, with formula AND cached/computed value
+officecli get file.xlsx /Sheet1/B10 --json
+
+# Find cells: CSS-like selectors, incl. row-by-column-name
+officecli query file.xlsx 'cell:has(formula)'
+officecli query file.xlsx 'Sheet1!row[Salary>5000]'
+
+# Formula errors and other problems, mechanically
+officecli view file.xlsx issues --json
+
+# SEE the sheet (PNG needs a headless browser: Playwright/Chrome/Edge/Firefox)
+officecli view file.xlsx screenshot -o /tmp/sheet.png
+officecli view file.xlsx screenshot --range "Sheet1!A1:H40" -o /tmp/region.png
+officecli view file.xlsx html -o /tmp/sheet.html
+officecli watch file.xlsx        # live preview at http://localhost:26315
+```
 
 ### Data analysis with pandas
 For data analysis, visualization, and basic operations, use **pandas** which provides powerful data manipulation capabilities:
@@ -131,23 +185,60 @@ sheet['D20'] = '=AVERAGE(D2:D19)'
 This applies to ALL calculations - totals, percentages, ratios, differences, etc. The spreadsheet should be able to recalculate when source data changes.
 
 ## Common Workflow
+
+Two routes. Prefer the first when formulas matter.
+
+### Route A - write formulas with officecli (evaluated as you write)
+
+`officecli set` evaluates a formula at write time and caches the result, so
+there is no separate recalculation pass:
+
+```bash
+officecli create output.xlsx
+officecli set output.xlsx /Sheet1/A1 --prop value="Revenue" --prop bold=true
+officecli set output.xlsx /Sheet1/B10 --prop formula="=SUM(B2:B9)"
+
+# read the computed value back
+officecli get output.xlsx /Sheet1/B10 --json
+```
+
+Then verify (see Verifying formula values below).
+
+### Route B - build with openpyxl/pandas, then fix up the values
+
+openpyxl writes formulas as STRINGS with no cached values, so a reader that
+does not recalculate sees blanks.
+
 1. **Choose tool**: pandas for data, openpyxl for formulas/formatting
 2. **Create/Load**: Create new workbook or load existing file
 3. **Modify**: Add/edit data, formulas, and formatting
 4. **Save**: Write to file
-5. **Recalculate formulas (MANDATORY IF USING FORMULAS)**: Use the scripts/recalc.py script
+5. **Populate formula values (MANDATORY IF USING FORMULAS)**: re-write each
+   formula cell through `officecli set`, which evaluates it:
    ```bash
-   python scripts/recalc.py output.xlsx
+   officecli set output.xlsx /Sheet1/B10 --prop formula="=SUM(B2:B9)"
    ```
-6. **Verify and fix any errors**: 
-   - The script returns JSON with error details
-   - If `status` is `errors_found`, check `error_summary` for specific error types and locations
-   - Fix the identified errors and recalculate again
-   - Common errors to fix:
-     - `#REF!`: Invalid cell references
-     - `#DIV/0!`: Division by zero
-     - `#VALUE!`: Wrong data type in formula
-     - `#NAME?`: Unrecognized formula name
+   For many cells, do it in one pass with `batch`:
+   ```bash
+   officecli batch output.xlsx --commands '[
+     {"op":"set","path":"/Sheet1/B10","props":{"formula":"=SUM(B2:B9)"}},
+     {"op":"set","path":"/Sheet1/C10","props":{"formula":"=AVERAGE(C2:C9)"}}
+   ]' --json
+   ```
+6. **Verify and fix any errors**: see Verifying formula values below. Common
+   errors to fix:
+   - `#REF!`: Invalid cell references
+   - `#DIV/0!`: Division by zero
+   - `#VALUE!`: Wrong data type in formula
+   - `#NAME?`: Unrecognized formula name
+
+**Flush before a non-officecli program reads the file.** officecli keeps a
+resident process, so openpyxl/pandas/an upload may otherwise read a stale file:
+
+```bash
+officecli save output.xlsx     # flush, keep resident warm
+officecli close output.xlsx    # flush + release
+```
 
 ### Creating new Excel files
 
@@ -205,25 +296,79 @@ new_sheet['A1'] = 'Data'
 wb.save('modified.xlsx')
 ```
 
-## Recalculating formulas
+## Verifying formula values
 
-Excel files created or modified by openpyxl contain formulas as strings but not calculated values. Use the provided `scripts/recalc.py` script to recalculate formulas:
+Excel files created or modified by openpyxl contain formulas as strings but no
+calculated values. `officecli` evaluates a formula when you WRITE it (`set
+... --prop formula=...`), and exposes three separate readback keys so you can
+tell a real value from a stale one:
+
+| key | meaning |
+|---|---|
+| `cachedValue` | the value stored in the file - what a non-recalculating reader sees |
+| `computedValue` | what officecli's evaluator computes NOW |
+| `uncalculated` | `true` if the formula cell has no cached value at all |
 
 ```bash
-python scripts/recalc.py <excel_file> [timeout_seconds]
+# one cell
+officecli get output.xlsx /Sheet1/B10 --json
+
+# just the cached value
+officecli get output.xlsx /Sheet1/B10 --json | jq '.data.results[0].format.cachedValue'
+
+# every formula cell
+officecli query output.xlsx 'cell:has(formula)' --json
+
+# formulas shown inline with their resolved values
+officecli view output.xlsx annotated
+
+# error scan across the workbook (#REF!, #DIV/0!, #VALUE!, #NAME?, ...)
+officecli view output.xlsx issues --json
 ```
 
-Example:
+**`cachedValue` != `computedValue` means the file on disk is lying.** That is a
+stale cache, reported by `view issues` as `formula_cache_stale`. Fix it by
+re-writing the formula (see below), not by ignoring it.
+
+### The staleness trap - read this before shipping a multi-formula model
+
+A formula is evaluated at the moment it is written, using whatever its
+precedents had cached AT THAT MOMENT. So a downstream formula written before its
+upstream was computed caches a wrong value - often `0` - and that wrong value
+survives into every reader that does not recalculate.
+
+After any multi-formula build - especially `SUMPRODUCT`, `SUMIFS` with dynamic
+criteria, `INDEX`/`MATCH`, or cross-sheet chains - **re-touch every downstream
+cell** by running the same `set` again so it recomputes from the now-correct
+upstream:
+
 ```bash
-python scripts/recalc.py output.xlsx 30
+# second pass: re-write the dependent formulas in dependency order
+officecli set model.xlsx /Summary/B2 --prop formula="=SUMPRODUCT(Data!B2:B50,Data!C2:C50)"
 ```
 
-The script:
-- Automatically sets up LibreOffice macro on first run
-- Recalculates all formulas in all sheets
-- Scans ALL cells for Excel errors (#REF!, #DIV/0!, etc.)
-- Returns JSON with detailed error locations and counts
-- Works on both Linux and macOS
+Do the re-touch pass WITHOUT a resident open (`officecli close model.xlsx`
+first) - re-touching cross-sheet chains through a resident is unreliable.
+
+Two more limits worth knowing:
+- A cell the evaluator could not compute carries the sentinel
+  `#OCLI_NOTEVAL!`. Remedy: close residents, then `set` the cell again.
+- **Dynamic arrays**: only the anchor (top-left) cell is evaluated; the spilled
+  cells are produced by Excel when it opens the file.
+
+### If you have LibreOffice and want a full-workbook recalculation
+
+`scripts/recalc.py` still exists and does a true `calculateAll()` across every
+sheet, then scans all cells for Excel errors. It requires LibreOffice
+(`soffice`), which is usually NOT installed - check first and do not make it
+part of the default path:
+
+```bash
+command -v soffice && python scripts/recalc.py output.xlsx 30
+```
+
+Prefer the officecli route above; reach for this only when you specifically need
+a whole-workbook recalculation by a real spreadsheet engine.
 
 ## Formula Verification Checklist
 
@@ -247,8 +392,21 @@ Quick checks to ensure formulas work correctly:
 - [ ] **Verify dependencies**: Check all cells referenced in formulas exist
 - [ ] **Test edge cases**: Include zero, negative, and very large values
 
-### Interpreting scripts/recalc.py Output
-The script returns JSON with error details:
+### Checking for formula errors
+
+Primary check - no LibreOffice needed:
+
+```bash
+officecli view output.xlsx issues --json
+```
+
+It reports `#REF!` / `#VALUE!` / `#NAME?` / `#DIV/0!` and the
+`formula_cache_stale` subtype (a `cachedValue` that disagrees with the
+evaluator). Fix what it lists, re-write the affected formulas, re-check.
+
+### Interpreting scripts/recalc.py Output (LibreOffice route only)
+When you deliberately used the `scripts/recalc.py` fallback, it returns JSON
+with error details:
 ```json
 {
   "status": "success",           // or "errors_found"
@@ -274,7 +432,9 @@ The script returns JSON with error details:
 - Use `data_only=True` to read calculated values: `load_workbook('file.xlsx', data_only=True)`
 - **Warning**: If opened with `data_only=True` and saved, formulas are replaced with values and permanently lost
 - For large files: Use `read_only=True` for reading or `write_only=True` for writing
-- Formulas are preserved but not evaluated - use scripts/recalc.py to update values
+- Formulas are preserved but not evaluated - re-write each formula cell through
+  `officecli set ... --prop formula="..."` to populate its cached value (see
+  Verifying formula values)
 
 ### Working with pandas
 - Specify data types to avoid inference issues: `pd.read_excel('file.xlsx', dtype={'id': str})`

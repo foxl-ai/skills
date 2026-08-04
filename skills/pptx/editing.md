@@ -6,10 +6,14 @@ When using an existing presentation as a template:
 
 1. **Analyze existing slides**:
    ```bash
-   python scripts/thumbnail.py template.pptx
-   python -m markitdown template.pptx
+   officecli view template.pptx screenshot --grid -o /tmp/template-grid.png
+   officecli view template.pptx outline
    ```
-   Review `thumbnails.jpg` to see layouts, and markitdown output to see placeholder text.
+   Read `/tmp/template-grid.png` to see the layouts, and the outline to see
+   slide titles and placeholder text. (`python scripts/thumbnail.py
+   template.pptx` also works and additionally labels each tile with its
+   `slideN.xml` filename and marks hidden slides - use it when you need to map
+   a layout back to a specific XML part.)
 
 2. **Plan slide mapping**: For each content section, choose a template slide.
 
@@ -92,9 +96,13 @@ Validates, repairs, condenses XML, re-encodes smart quotes.
 python scripts/thumbnail.py input.pptx [output_prefix] [--cols N]
 ```
 
-Creates `thumbnails.jpg` with slide filenames as labels. Default 3 columns, max 12 per grid.
+Creates `thumbnails.jpg` with slide filenames as labels (and a crosshatch
+placeholder for hidden slides). Default 3 columns, max 12 per grid. Renders via
+`officecli` under the hood, so it needs `officecli` on PATH.
 
-**Use for template analysis only** (choosing layouts). For visual QA, use `soffice` + `pdftoppm` to create full-resolution individual slide images—see SKILL.md.
+**Use for template analysis only** (choosing layouts, mapping a layout to its
+`slideN.xml`). For visual QA, render full-resolution slides with
+`officecli view deck.pptx screenshot --start N --end N -o /tmp/slide-N.png`—see SKILL.md.
 
 ---
 
