@@ -36,6 +36,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
+Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
+Linux) - the installer picks the right binary. **Write output next to the deck
+or into a directory you created, not `/tmp`**: the examples below use `/tmp` for
+brevity, but it does not exist on Windows - use `$env:TEMP` there, or just a
+relative `out\` folder.
+
 Supported formats are exactly `.docx`, `.xlsx`, `.pptx` - legacy `.ppt` is not.
 
 ---
@@ -293,9 +299,17 @@ range is stacked vertically into that single image and `--grid` tiles it - there
 is no `slide-01.png, slide-02.png` output mode. For per-slide files, loop:
 
 ```bash
+# macOS / Linux
 for i in $(seq 1 12); do
-  officecli view output.pptx screenshot --start $i --end $i -o /tmp/slide-$i.png
+  officecli view output.pptx screenshot --start "$i" --end "$i" -o "out/slide-$i.png"
 done
+```
+
+```powershell
+# Windows PowerShell - officecli ships win-x64 and win-arm64 binaries
+1..12 | ForEach-Object {
+  officecli view output.pptx screenshot --start $_ --end $_ -o "out\slide-$_.png"
+}
 ```
 
 `-o` is effectively required: with no `-o`, officecli writes a random temp file
@@ -337,4 +351,5 @@ officecli view output.pptx issues --json   # overflow, missing alt text, contras
 
 Not required: LibreOffice, PowerPoint, Poppler/`pdftoppm`. Legacy `.ppt` is not
 supported by officecli - ask for a `.pptx`, and do not assume a converter
-exists (`command -v soffice` first if you must try).
+exists (probe first: `command -v soffice` on macOS/Linux,
+`Get-Command soffice -ErrorAction SilentlyContinue` in PowerShell).

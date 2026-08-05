@@ -90,6 +90,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
+Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
+Linux) - the installer picks the right binary. **Write output next to the
+workbook or into a directory you created, not `/tmp`**: the examples below use
+`/tmp` for brevity, but it does not exist on Windows - use `$env:TEMP` there, or
+a relative `out\` folder.
+
 Supported formats are exactly `.docx`, `.xlsx`, `.pptx`. Legacy `.xls` is NOT
 supported - ask for an `.xlsx`. `.csv`/`.tsv` are handled with pandas, or
 imported with `officecli import`.
@@ -364,8 +370,18 @@ sheet, then scans all cells for Excel errors. It requires LibreOffice
 part of the default path:
 
 ```bash
+# macOS / Linux
 command -v soffice && python scripts/recalc.py output.xlsx 30
 ```
+
+```powershell
+# Windows PowerShell
+if (Get-Command soffice -ErrorAction SilentlyContinue) { python scripts/recalc.py output.xlsx 30 }
+```
+
+Note the helper it uses (`scripts/office/soffice.py`) carries a Linux-only
+sandbox shim (LD_PRELOAD + gcc), so on macOS/Windows this path works only if
+`soffice` is already on PATH.
 
 Prefer the officecli route above; reach for this only when you specifically need
 a whole-workbook recalculation by a real spreadsheet engine.

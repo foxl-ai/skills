@@ -40,6 +40,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
+Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
+Linux) - the installer picks the right binary. **Write output next to the
+document or into a directory you created, not `/tmp`**: the examples below use
+`/tmp` for brevity, but it does not exist on Windows - use `$env:TEMP` there, or
+a relative `out\` folder.
+
 Only `.docx` is supported. Legacy binary `.doc` is NOT (see Legacy .doc below).
 
 ### Reading Content
@@ -170,8 +176,9 @@ Neither is available through `officecli`, and neither is faked here:
   is not published. Ask the user to re-save as `.docx`, or convert it with
   whatever converter the machine actually has (`soffice --headless
   --convert-to docx file.doc` if LibreOffice happens to be installed, or
-  `pandoc`). Do NOT assume LibreOffice exists - check with
-  `command -v soffice` first.
+  `pandoc`). Do NOT assume LibreOffice exists - probe first:
+  `command -v soffice` on macOS/Linux,
+  `Get-Command soffice -ErrorAction SilentlyContinue` in PowerShell.
 - **PDF export**: `officecli view <file> pdf` requires an `exporter` plugin
   that is NOT shipped with the binary and has no published installer, so treat
   PDF as unavailable. If the deliverable must be a PDF, say so and ask how the
