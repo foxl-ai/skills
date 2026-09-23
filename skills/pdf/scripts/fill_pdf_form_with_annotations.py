@@ -1,107 +1,125 @@
+#!/usr/bin/env python3
+"""Overlay text onto a NON-fillable PDF at given bounding boxes.
+
+Usage:
+    python fill_pdf_form_with_annotations.py <input.pdf> <fields.json> <output.pdf>
+
+fields.json (see forms.md) has:
+    {"pages": [{"page_number": 1, "pdf_width": 612, "pdf_height": 792}],
+     "form_fields": [
+        {"page_number": 1,
+         "entry_bounding_box": [x0, top, x1, bottom],
+         "entry_text": {"text": "Smith", "font_size": 10}},
+        ...]}
+
+Coordinate system per page auto-detected from its "pages" entry:
+  * pdf_width / pdf_height     -> coordinates are PDF points (top-origin)
+  * image_width / image_height -> coordinates are pixels; scaled to the real
+                                  PDF page size read from the input PDF
+A reportlab overlay canvas (bottom-origin) is drawn for each page and merged
+onto the original page with pypdf. Text is baseline-placed just inside the
+bottom edge of each entry box.
+"""
+import io
 import json
 import sys
 
 from pypdf import PdfReader, PdfWriter
-from pypdf.annotations import FreeText
+from reportlab.pdfgen import canvas
+
+_DEFAULT_FONT = "Helvetica"
+_DEFAULT_FONT_SIZE = 10.0
+_BASELINE_PAD = 2.0  # points above the box's bottom edge for the text baseline
 
 
+def _page_meta(fields_doc):
+    meta = {}
+    for page in fields_doc.get("pages", []):
+        num = page.get("page_number")
+        if num is not None:
+            meta[num] = page
+    return meta
 
 
-def transform_from_image_coords(bbox, image_width, image_height, pdf_width, pdf_height):
-    x_scale = pdf_width / image_width
-    y_scale = pdf_height / image_height
-
-    left = bbox[0] * x_scale
-    right = bbox[2] * x_scale
-
-    top = pdf_height - (bbox[1] * y_scale)
-    bottom = pdf_height - (bbox[3] * y_scale)
-
-    return left, bottom, right, top
+def _fields_by_page(fields_doc):
+    by_page = {}
+    for field in fields_doc.get("form_fields", []):
+        by_page.setdefault(field.get("page_number"), []).append(field)
+    return by_page
 
 
-def transform_from_pdf_coords(bbox, pdf_height):
-    left = bbox[0]
-    right = bbox[2]
+def _scale_to_pdf(page_meta, pdf_w, pdf_h):
+    """Return (sx, sy) converting fields.json coords into PDF points."""
+    if page_meta is not None:
+        if page_meta.get("image_width") and page_meta.get("image_height"):
+            return (pdf_w / float(page_meta["image_width"]),
+                    pdf_h / float(page_meta["image_height"]))
+        if page_meta.get("pdf_width") and page_meta.get("pdf_height"):
+            # Coords already in points; correct only if declared size drifts.
+            return (pdf_w / float(page_meta["pdf_width"]),
+                    pdf_h / float(page_meta["pdf_height"]))
+    return (1.0, 1.0)
 
-    pypdf_top = pdf_height - bbox[1]      
-    pypdf_bottom = pdf_height - bbox[3]   
 
-    return left, pypdf_bottom, right, pypdf_top
+def fill(in_pdf, fields_doc, out_pdf):
+    reader = PdfReader(in_pdf)
+    meta = _page_meta(fields_doc)
+    by_page = _fields_by_page(fields_doc)
 
+    packet = io.BytesIO()
+    overlay = canvas.Canvas(packet)
+    drawn = 0
 
-def fill_pdf_form(input_pdf_path, fields_json_path, output_pdf_path):
-    
-    with open(fields_json_path, "r") as f:
-        fields_data = json.load(f)
-    
-    reader = PdfReader(input_pdf_path)
+    for index, page in enumerate(reader.pages):
+        page_number = index + 1
+        box = page.mediabox
+        pdf_w = float(box.width)
+        pdf_h = float(box.height)
+        overlay.setPageSize((pdf_w, pdf_h))
+
+        sx, sy = _scale_to_pdf(meta.get(page_number), pdf_w, pdf_h)
+        for field in by_page.get(page_number, []):
+            entry_box = field.get("entry_bounding_box")
+            entry_text = field.get("entry_text") or {}
+            text = entry_text.get("text")
+            if not entry_box or text is None:
+                continue
+            font_size = float(entry_text.get("font_size") or _DEFAULT_FONT_SIZE)
+            x0 = min(float(entry_box[0]), float(entry_box[2])) * sx
+            bottom = max(float(entry_box[1]), float(entry_box[3])) * sy
+            # Top-origin box bottom -> reportlab bottom-origin baseline.
+            baseline_y = pdf_h - bottom + _BASELINE_PAD
+            overlay.setFont(_DEFAULT_FONT, font_size)
+            overlay.drawString(x0, baseline_y, str(text))
+            drawn += 1
+        overlay.showPage()
+
+    overlay.save()
+    packet.seek(0)
+
+    overlay_reader = PdfReader(packet)
     writer = PdfWriter()
-    
-    writer.append(reader)
-    
-    pdf_dimensions = {}
-    for i, page in enumerate(reader.pages):
-        mediabox = page.mediabox
-        pdf_dimensions[i + 1] = [mediabox.width, mediabox.height]
-    
-    annotations = []
-    for field in fields_data["form_fields"]:
-        page_num = field["page_number"]
+    for index, page in enumerate(reader.pages):
+        if index < len(overlay_reader.pages):
+            page.merge_page(overlay_reader.pages[index])
+        writer.add_page(page)
 
-        page_info = next(p for p in fields_data["pages"] if p["page_number"] == page_num)
-        pdf_width, pdf_height = pdf_dimensions[page_num]
+    with open(out_pdf, "wb") as handle:
+        writer.write(handle)
+    return drawn
 
-        if "pdf_width" in page_info:
-            transformed_entry_box = transform_from_pdf_coords(
-                field["entry_bounding_box"],
-                float(pdf_height)
-            )
-        else:
-            image_width = page_info["image_width"]
-            image_height = page_info["image_height"]
-            transformed_entry_box = transform_from_image_coords(
-                field["entry_bounding_box"],
-                image_width, image_height,
-                float(pdf_width), float(pdf_height)
-            )
-        
-        if "entry_text" not in field or "text" not in field["entry_text"]:
-            continue
-        entry_text = field["entry_text"]
-        text = entry_text["text"]
-        if not text:
-            continue
-        
-        font_name = entry_text.get("font", "Arial")
-        font_size = str(entry_text.get("font_size", 14)) + "pt"
-        font_color = entry_text.get("font_color", "000000")
 
-        annotation = FreeText(
-            text=text,
-            rect=transformed_entry_box,
-            font=font_name,
-            font_size=font_size,
-            font_color=font_color,
-            border_color=None,
-            background_color=None,
-        )
-        annotations.append(annotation)
-        writer.add_annotation(page_number=page_num - 1, annotation=annotation)
-        
-    with open(output_pdf_path, "wb") as output:
-        writer.write(output)
-    
-    print(f"Successfully filled PDF form and saved to {output_pdf_path}")
-    print(f"Added {len(annotations)} text annotations")
+def main(argv):
+    if len(argv) != 4:
+        print("Usage: python fill_pdf_form_with_annotations.py <input.pdf> "
+              "<fields.json> <output.pdf>", file=sys.stderr)
+        return 2
+    with open(argv[2], encoding="utf-8") as handle:
+        fields_doc = json.load(handle)
+    drawn = fill(argv[1], fields_doc, argv[3])
+    print(f"Overlaid {drawn} text field(s); wrote {argv[3]}")
+    return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 4:
-        print("Usage: fill_pdf_form_with_annotations.py [input pdf] [fields.json] [output pdf]")
-        sys.exit(1)
-    input_pdf = sys.argv[1]
-    fields_json = sys.argv[2]
-    output_pdf = sys.argv[3]
-    
-    fill_pdf_form(input_pdf, fields_json, output_pdf)
+    sys.exit(main(sys.argv))

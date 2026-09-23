@@ -2,3 +2,7 @@
 .omc/
 .repo-cache/
 skills/.git-repo/
+
+# Python bytecode
+__pycache__/
+*.pyc
