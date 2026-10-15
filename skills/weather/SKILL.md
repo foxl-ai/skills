@@ -1,58 +1,44 @@
 ---
 name: weather
-description: Get current weather and forecasts using free services (no API key required)
+description: "Current weather and multi-day forecasts for any city or coordinates via free no-key services (wttr.in for a quick line, Open-Meteo for structured JSON). Use when the user asks about weather, temperature, rain or a forecast, or a briefing needs it."
 enabled: true
+tags: weather, forecast, briefing
 ---
 
-# Weather Skill
+# Weather
 
-Get weather information using free services.
+Both services are free and need no API key. Use `curl` (on Windows PowerShell call
+`curl.exe`, not the `curl` alias). Answer in the user's units: wttr.in picks units by
+the caller's IP, so force them with `m` (metric) or `u` (US).
 
-## When to use
-- User asks about weather
-- User asks about forecast
-- Morning briefing needs weather info
-
-## How to execute
-
-### wttr.in (Primary - No API key needed)
-
-Quick one-liner:
-```bash
-curl -s "wttr.in/Seoul?format=3"
-# Output: Seoul: ⛅️ +8°C
-```
-
-Compact format:
-```bash
-curl -s "wttr.in/Seoul?format=%l:+%c+%t+%h+%w"
-# Output: Seoul: ⛅️ +8°C 71% ↙5km/h
-```
-
-Full forecast:
-```bash
-curl -s "wttr.in/Seoul?T"
-```
-
-Format codes:
-- `%c` condition
-- `%t` temperature
-- `%h` humidity
-- `%w` wind
-- `%l` location
-- `%m` moon phase
-
-Tips:
-- URL-encode spaces: `wttr.in/New+York`
-- Airport codes: `wttr.in/ICN`
-- Units: `?m` (metric) `?u` (USCS)
-- Today only: `?1`
-- Current only: `?0`
-
-### Open-Meteo (Fallback - JSON API)
+## Quick answer: wttr.in
 
 ```bash
-curl -s "https://api.open-meteo.com/v1/forecast?latitude=37.5665&longitude=126.9780&current_weather=true"
+curl -s "https://wttr.in/Seoul?format=3&m"
+curl -s "https://wttr.in/New+York?format=%l:+%C+%t+(feels+%f)+%h+%w&u"
 ```
 
-Returns JSON with temp, windspeed, weathercode.
+- Location: city (`New+York`), airport code (`ICN`), `~Eiffel+Tower`, or `lat,lon`.
+- Codes: `%C` condition text, `%t` temp, `%f` feels like, `%h` humidity, `%w` wind,
+  `%p` precipitation, `%u` UV, `%S`/`%s` sunrise/sunset, `%l` location.
+- Forecast as JSON (3 days): `?format=j1`. Text view: `?0` now, `?1` today, `?2` +tomorrow,
+  add `T` for no colors (e.g. `?2Tq&m`).
+- Language for the text views: `&lang=ko`. Fallback domain if wttr.in is down: `wttr.is`.
+
+## Structured forecast: Open-Meteo
+
+Look up coordinates, then fetch the forecast (`timezone=auto` gives local times):
+
+```bash
+curl -s "https://geocoding-api.open-meteo.com/v1/search?name=Seoul&count=1"
+curl -s "https://api.open-meteo.com/v1/forecast?latitude=37.566&longitude=126.978&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=3"
+```
+
+- Units: add `&temperature_unit=fahrenheit&wind_speed_unit=mph` for US users.
+- Hourly: `&hourly=temperature_2m,precipitation_probability`. Up to 16 days via `forecast_days`.
+- `weather_code` is WMO: 0 clear, 1-3 partly cloudy to overcast, 45/48 fog,
+  51-57 drizzle, 61-67 rain, 71-77 snow, 80-82 showers, 85/86 snow showers,
+  95-99 thunderstorm.
+- Docs: https://open-meteo.com/en/docs (free for non-commercial use).
+
+Give the answer in plain words (condition, temperature, rain chance), not raw JSON.

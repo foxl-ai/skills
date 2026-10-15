@@ -197,6 +197,15 @@ def add_slide(unpacked_dir: str, source: str) -> int:
     pres = root / "ppt" / "presentation.xml"
     sld_id_lst = _parse(pres).getroot().find(f"{{{P_NS}}}sldIdLst")
     new_id = _next_slide_id(sld_id_lst) if sld_id_lst is not None else 256
+    # Slides added by an earlier run whose <p:sldId> was not pasted yet still
+    # own the ids printed for them, so skip past every pending slide
+    # relationship (the one just added counts as the first).
+    listed = set()
+    if sld_id_lst is not None:
+        listed = {el.get(f"{{{R_NS}}}id") for el in sld_id_lst.iter(f"{{{P_NS}}}sldId")}
+    pending = [r for r in pres_rels_root.iter(f"{{{RELS_NS}}}Relationship")
+               if r.get("Type") == SLIDE_REL_TYPE and r.get("Id") not in listed]
+    new_id += max(len(pending) - 1, 0)
 
     print(f"Created ppt/slides/{new_slide_name} ({origin})")
     print(f"  rels:          ppt/slides/_rels/{new_slide_name}.rels")

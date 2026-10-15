@@ -1,82 +1,62 @@
 ---
 name: tmux
-description: Remote-control tmux sessions for interactive CLIs
+description: "Drive interactive programs (REPLs, TUIs, other coding agent CLIs) in detached tmux sessions that outlive Foxl, using send-keys and capture-pane through exec. Use when a session must survive a Foxl restart, several programs must run side by side, or the user works in tmux themselves; otherwise prefer the built-in terminal tool."
 enabled: false
 platforms: [darwin, linux]
 requires: [tmux]
+tags: shell, terminal, automation
 ---
 
-# tmux Skill
+# tmux via exec
 
-Use tmux for interactive TTY sessions. Prefer exec background mode for non-interactive tasks.
+First choice for one interactive program is the built-in `terminal` tool (real PTY: `spawn`, `write`, `read`). Use tmux when you need detached sessions that keep running independently, or many at once.
 
-## Quickstart
+Install if missing (the user runs it): `brew install tmux` or the distro package (`apt install tmux`, `dnf install tmux`).
+
+## Setup
+
+Use a private socket so you never touch the user's own tmux server:
 
 ```bash
-SOCKET_DIR="${TMPDIR:-/tmp}/pilot-tmux-sockets"
-mkdir -p "$SOCKET_DIR"
-SOCKET="$SOCKET_DIR/pilot.sock"
-SESSION=pilot-python
-
-tmux -S "$SOCKET" new -d -s "$SESSION" -n shell
-tmux -S "$SOCKET" send-keys -t "$SESSION":0.0 -- 'python3 -q' Enter
-tmux -S "$SOCKET" capture-pane -p -J -t "$SESSION":0.0 -S -200
+SOCK="${TMPDIR:-/tmp}/foxl-tmux.sock"
+tmux -S "$SOCK" new-session -d -s work -x 200 -y 50
+tmux -S "$SOCK" has-session -t work && echo ok
 ```
 
-## Targeting
+Shell variables do not persist between `exec` calls; repeat the `SOCK=` line (or the literal path) in each command.
 
-- Format: `session:window.pane` (defaults to `:0.0`)
-- List sessions: `tmux -S "$SOCKET" list-sessions`
-- List panes: `tmux -S "$SOCKET" list-panes -a`
-
-## Sending Input
+## Send input
 
 ```bash
-# Literal text
-tmux -S "$SOCKET" send-keys -t target -l -- "$cmd"
-
-# Control keys
-tmux -S "$SOCKET" send-keys -t target C-c
-
-# For TUI apps (Claude Code/Codex), send text and Enter separately
-tmux -S "$SOCKET" send-keys -t target -l -- "$cmd" && sleep 0.1 && tmux -S "$SOCKET" send-keys -t target Enter
+tmux -S "$SOCK" send-keys -t work -l -- 'python3 -q'   # -l: literal text
+tmux -S "$SOCK" send-keys -t work Enter                # named key, separate call
+tmux -S "$SOCK" send-keys -t work C-c                  # interrupt
 ```
 
-## Watching Output
+Send text and `Enter` as two calls; TUIs often drop an Enter glued to pasted text.
+
+## Read output
 
 ```bash
-# Capture recent history
-tmux -S "$SOCKET" capture-pane -p -J -t target -S -200
-
-# Attach (detach with Ctrl+b d)
-tmux -S "$SOCKET" attach -t "$SESSION"
+tmux -S "$SOCK" capture-pane -p -J -t work -S -200     # last 200 lines, wrapped lines joined
 ```
 
-## Orchestrating Coding Agents
+Poll instead of sleeping long: capture, check for the prompt or the text you expect, repeat after a short `sleep 2`. For a full log, `tmux -S "$SOCK" pipe-pane -o -t work 'cat >> /tmp/work.log'`.
+
+## Several sessions
 
 ```bash
-SOCKET="${TMPDIR:-/tmp}/codex-army.sock"
-
-# Create multiple sessions
-for i in 1 2 3; do
-  tmux -S "$SOCKET" new-session -d -s "agent-$i"
-done
-
-# Launch agents
-tmux -S "$SOCKET" send-keys -t agent-1 "cd /tmp/project1 && codex --yolo 'Fix bug X'" Enter
-tmux -S "$SOCKET" send-keys -t agent-2 "cd /tmp/project2 && codex --yolo 'Fix bug Y'" Enter
-
-# Poll for completion
-for sess in agent-1 agent-2; do
-  if tmux -S "$SOCKET" capture-pane -p -t "$sess" -S -3 | grep -q "❯"; then
-    echo "$sess: DONE"
-  fi
-done
+for n in a b c; do tmux -S "$SOCK" new-session -d -s "job-$n" -c "$HOME/projects/$n"; done
+tmux -S "$SOCK" list-sessions
 ```
 
-## Cleanup
+Targets are `session`, `session:window` or `session:window.pane`.
+
+## Hand off and clean up
+
+The user can watch with `tmux -S <socket path> attach -t work` (detach: Ctrl-b then d). When finished:
 
 ```bash
-tmux -S "$SOCKET" kill-session -t "$SESSION"
-tmux -S "$SOCKET" kill-server  # Kill all
+tmux -S "$SOCK" kill-session -t work
+tmux -S "$SOCK" kill-server        # all sessions on this private socket only
 ```

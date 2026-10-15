@@ -1,75 +1,52 @@
 ---
-name: "obsidian"
-description: "Work with Obsidian vaults and notes using obsidian-cli"
+name: obsidian
+description: "Find, read, create, append to and reorganize notes in a local Obsidian vault (plain Markdown files), directly on disk or with the official obsidian CLI. Use when the user mentions Obsidian, their vault, a daily note or [[wikilinks]]."
 enabled: true
+tags: obsidian, notes, markdown, vault, pkm
 ---
 
-# Obsidian Skill
+# Obsidian
 
-Work with Obsidian vaults (plain Markdown notes).
+A vault is a folder of Markdown files. Most work needs no CLI: find the vault, then use `file_read`, `file_edit`, `file_write` and `code_search` on the `.md` files. Obsidian picks up changes on disk by itself.
 
-## Vault Structure
-- Notes: `*.md` (plain text Markdown)
-- Config: `.obsidian/` (workspace + plugin settings)
-- Canvases: `*.canvas` (JSON)
-- Attachments: images/PDFs in configured folder
+## Find the vault
 
-## When to use
-- User wants to search Obsidian notes
-- User wants to create/edit notes
-- User wants to organize vault
+The list of vaults (each has a `path`) is in `obsidian.json`:
 
-## How to execute
+- macOS: `~/Library/Application Support/obsidian/obsidian.json`
+- Linux: `~/.config/obsidian/obsidian.json` (Flatpak: `~/.var/app/md.obsidian.Obsidian/config/obsidian/obsidian.json`)
+- Windows: `%APPDATA%\obsidian\obsidian.json`
 
-### Find active vault
+If there are several, ask which one; `"open": true` marks the last opened.
 
-Obsidian tracks vaults in:
-`~/Library/Application Support/obsidian/obsidian.json`
+## Vault conventions
 
-Get default vault path:
-```bash
-obsidian-cli print-default --path-only
-```
+- Notes `*.md`; canvases `*.canvas` (JSON); attachments in the folder set in `.obsidian/app.json` (`attachmentFolderPath`).
+- Links are `[[Note name]]` or `[[Note name|alias]]`; embeds `![[file.png]]`. Frontmatter is YAML between `---` lines.
+- Daily notes: folder and date format are in `.obsidian/daily-notes.json` (defaults: vault root, `YYYY-MM-DD`).
+- Never edit `.obsidian/` or other dot-folders unless asked, and do not create notes there.
 
-### Set default vault
+## Renaming or moving a note
 
-```bash
-obsidian-cli set-default "<vault-folder-name>"
-```
+Moving a file on disk does NOT update links pointing to it. Either grep the vault for `[[Old name` and fix each link, or use the CLI below, which renames through the app and updates links when the user has "Automatically update internal links" on.
 
-### Search notes
+## Official CLI (optional)
 
-By name:
-```bash
-obsidian-cli search "query"
-```
-
-By content:
-```bash
-obsidian-cli search-content "query"
-```
-
-### Create note
+Obsidian 1.12.7+ ships `obsidian` (https://obsidian.md/help/cli). The user enables it in Obsidian Settings > General > Command line interface. It talks to the running app and launches it if needed. Check with `obsidian vaults`.
 
 ```bash
-obsidian-cli create "Folder/New note" --content "..." --open
+obsidian vault="My Vault" search query="meeting notes" limit=20 format=json
+obsidian search:context query="budget" path=Projects
+obsidian read file="Recipe"                    # file= resolves like a wikilink
+obsidian read path="Templates/Recipe.md"       # path= is exact, from the vault root
+obsidian create path="Inbox/Idea.md" content="# Idea\nBody"
+obsidian append file="Project X" content="- [ ] Follow up"
+obsidian daily:append content="- Met with Sam"
+obsidian move file="Idea" to="Projects/Idea.md"
+obsidian rename file="Idea" name="Better idea"
+obsidian delete file="Old note"                # moves to trash; add permanent only if asked
 ```
 
-### Move/rename (safe refactor)
+Without `vault=` it uses the active vault. In `content=`, write `\n` for a newline and `\t` for a tab. Confirm before delete, overwrite or bulk moves.
 
-```bash
-obsidian-cli move "old/path/note" "new/path/note"
-```
-
-This updates `[[wikilinks]]` across the vault.
-
-### Delete note
-
-```bash
-obsidian-cli delete "path/note"
-```
-
-## Notes
-- Prefer direct `.md` file edits when appropriate
-- Obsidian will pick up changes automatically
-- Avoid creating notes in hidden dot-folders
+The older community `obsidian-cli` (Yakitrak) is unrelated to the official CLI; do not suggest installing it.

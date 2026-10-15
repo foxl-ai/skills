@@ -66,7 +66,7 @@ The skill folders are under **`skills/` inside this checkout**. Use the app's Sk
 | **Media and audio** | [Spotify](skills/spotify/) · [Spotify player](skills/spotify-player/) · [Sonos](skills/sonos/) · [Video frames](skills/video-frames/) · [Local text-to-speech](skills/sherpa-onnx-tts/) |
 | **Automation and experiments** | [Voice calls](skills/voice-call/) · [tmux](skills/tmux/) · [Autoresearch](skills/autoresearch/) · [Healthcheck](skills/healthcheck/) |
 
-The library includes both everyday workflows and specialized experiments. A folder's presence does not mean its dependencies are installed or that it is enabled by default. The document skills also have [separate license terms](#licenses-and-attribution).
+The library includes both everyday workflows and specialized experiments. A folder's presence does not mean its dependencies are installed or that it is enabled by default.
 
 ## Inside a skill
 
@@ -142,8 +142,7 @@ The repository's default license is [MIT No Attribution (MIT-0)](LICENSE). **Ind
 | Material | License information |
 | :--- | :--- |
 | Repository material without a separate license | [MIT-0](LICENSE) |
-| Skill creator | [Apache-2.0](skills/skill-creator/LICENSE.txt) |
-| Word, PDF, PowerPoint, and Excel skills | Separate Anthropic terms: [Word](skills/docx/LICENSE.txt), [PDF](skills/pdf/LICENSE.txt), [PowerPoint](skills/pptx/LICENSE.txt), [Excel](skills/xlsx/LICENSE.txt) |
+| Skill creator | [Apache-2.0](skills/skill-creator/LICENSE.txt), modified for Foxl (2026-10: instructions rewritten for Foxl, validator made stdlib-only) |
 | Other bundled components | [Third-party notices](THIRD_PARTY_NOTICES.md) |
 
 Read the applicable skill's license before reusing or redistributing its contents.

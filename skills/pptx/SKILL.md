@@ -1,6 +1,6 @@
 ---
 name: pptx
-description: "Create, read, edit, and combine PowerPoint .pptx files. Use for ANY task where a .pptx is an input, an output, or both: building slide decks, pitch decks, or presentations; reading, parsing, or extracting text from a deck (even when the text is reused elsewhere, such as an email or a summary); editing, modifying, or updating an existing presentation; combining or splitting slide files; and working with templates, layouts, speaker notes, or comments. Triggers on 'deck', 'slides', 'presentation', or any reference to a .pptx filename, no matter what happens to the content downstream. Fire whenever a .pptx must be opened, created, or touched."
+description: "Create, read, edit and render PowerPoint decks (.pptx). Use whenever a .pptx is the input or the output, or the user wants a deck, slides or a presentation file: building a deck from scratch or from a template, extracting text (even for reuse elsewhere), editing or restyling slides, combining or splitting decks, layouts, speaker notes and comments."
 enabled: true
 license: MIT-0
 ---
@@ -25,7 +25,8 @@ directly. No LibreOffice, no PowerPoint, no Office install. Verify first:
 officecli --version
 ```
 
-If missing, install it (open a new shell if the binary still is not found):
+If missing, install it (open a new shell if the binary is still not found).
+Source and releases: https://github.com/iOfficeAI/OfficeCLI
 
 ```bash
 # macOS / Linux
@@ -34,11 +35,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
-Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
-Linux) - the installer picks the right binary. **Write output next to the deck
-or into a directory you created, not `/tmp`**: the examples below use `/tmp` for
-brevity, but it does not exist on Windows - use `$env:TEMP` there, or just a
-relative `out\` folder.
+The installer picks the right binary for macOS, Linux or Windows (x64/arm64).
+On first install it also copies officecli's own SKILL.md into the config folders
+of any other coding agents it detects in the home directory.
+
+The examples write into `out/`; create it first (`mkdir out`). Do not hardcode
+`/tmp`, which does not exist on Windows.
 
 Supported formats are exactly `.docx`, `.xlsx`, `.pptx` - legacy `.ppt` is not.
 
@@ -61,7 +63,7 @@ officecli query presentation.pptx 'shape[fill=FF0000]'
 officecli view presentation.pptx issues --json
 
 # Visual overview - see Rendering below
-officecli view presentation.pptx screenshot --grid -o /tmp/overview.png
+officecli view presentation.pptx screenshot --grid -o out/overview.png
 
 # Raw XML
 python scripts/office/unpack.py presentation.pptx unpacked/   # then read unpacked/ppt/slides/*.xml
@@ -190,21 +192,20 @@ come away with zero issues, you did not look hard enough.
 
 ### Content QA
 
-Pull the text back out and read it with `python -m markitdown output.pptx`, then
-check for content that went missing, typos, and slides in the wrong order.
+Pull the text back out with `officecli view output.pptx text`, then check for content that went missing, typos, and slides in the wrong order.
 
 When you started from a template, grep for placeholder text that survived:
 
 ```bash
-python -m markitdown output.pptx | grep -iE "xxxx|lorem|ipsum|this.*(page|slide).*layout"
+officecli view output.pptx text | grep -iE "xxxx|lorem|ipsum|this.*(page|slide).*layout"
 ```
 
 Fix every match before you declare success.
 
 ### Visual QA
 
-Bring in a subagent for the visual pass even on a two- or three-slide deck; fresh
-eyes catch what the author's eyes glide past. Render the slides to images (see
+If subagents are available, hand the visual pass to one even on a short deck;
+fresh eyes catch what the author's eyes glide past. Otherwise run it yourself. Render the slides to images (see
 [Rendering](#rendering-this-is-how-you-see-the-slides)), then use this prompt:
 
 ```
@@ -227,8 +228,8 @@ For each image, look for:
 List the issues for each slide, including minor ones, and report every issue you
 find.
 
-1. /tmp/slide-1.png (Expected: [brief description])
-2. /tmp/slide-2.png (Expected: [brief description])
+1. out/slide-1.png (Expected: [brief description])
+2. out/slide-2.png (Expected: [brief description])
 ```
 
 ### Verification loop
@@ -239,7 +240,7 @@ find.
 3. Fix the issues.
 4. **Re-verify affected slides** - one fix often creates another problem.
    Re-render just the slide you touched:
-   `officecli view output.pptx screenshot --start N --end N -o /tmp/slide-N.png`
+   `officecli view output.pptx screenshot --start N --end N -o out/slide-N.png`
 5. Repeat the cycle until a full pass turns up nothing new.
 
 Run `officecli view output.pptx issues --json` alongside the visual pass - it
@@ -261,28 +262,28 @@ do not convert to PDF just to look at slides.
 
 ```bash
 # ONE slide (default is slide 1)
-officecli view output.pptx screenshot -o /tmp/slide-01.png
+officecli view output.pptx screenshot -o out/slide-01.png
 
 # A specific slide
-officecli view output.pptx screenshot --start 3 --end 3 -o /tmp/slide-03.png
+officecli view output.pptx screenshot --start 3 --end 3 -o out/slide-03.png
 
 # Contact sheet: every slide tiled into ONE image, for a whole-deck pass
-officecli view output.pptx screenshot --grid -o /tmp/overview.png
-officecli view output.pptx screenshot --grid 4 -o /tmp/overview.png
+officecli view output.pptx screenshot --grid -o out/overview.png
+officecli view output.pptx screenshot --grid 4 -o out/overview.png
 
 # A slide range, wider raster (default 1600x1200)
 officecli view output.pptx screenshot --start 1 --end 4 --grid 2 \
-  --screenshot-width 1920 -o /tmp/first-four.png
+  --screenshot-width 1920 -o out/first-four.png
 
 # Crop to one shape
-officecli view output.pptx screenshot --range '/slide[1]/shape[@id=100000]' -o /tmp/shape.png
+officecli view output.pptx screenshot --range '/slide[1]/shape[@id=100000]' -o out/shape.png
 
 # Vector render of a single slide (sharpest for text/equation checks).
 # NOTE: svg mode ignores -o and writes to STDOUT - redirect it yourself.
-officecli view output.pptx svg --start 3 --end 3 > /tmp/slide-03.svg
+officecli view output.pptx svg --start 3 --end 3 > out/slide-03.svg
 
 # Static HTML snapshot, or a live auto-refreshing preview
-officecli view output.pptx html -o /tmp/deck.html
+officecli view output.pptx html -o out/deck.html
 officecli watch output.pptx        # http://localhost:26315
 officecli unwatch output.pptx
 ```
@@ -329,16 +330,14 @@ officecli view output.pptx issues --json   # overflow, missing alt text, contras
 
 ## Dependencies
 
-- **officecli**: reading, rendering (PNG/SVG/HTML), validation.
-  `curl -fsSL https://d.officecli.ai/install.sh | bash` - verify with
-  `officecli --version`. This is the primary tool.
+- **officecli** (primary): reading, rendering (PNG/SVG/HTML), validation;
+  install above.
 - **a headless browser** (Playwright / Chrome / Edge / Firefox): only for
   `view ... screenshot`; auto-detected.
-- `npm install -g pptxgenjs` - creating decks from scratch
-- `pip install Pillow` - only if you build custom thumbnail grids yourself
-  (`officecli view ... screenshot --grid` already makes contact sheets)
-- `pip install "markitdown[pptx]"` - optional alternative text extraction
-  (`officecli view ... text` covers this)
+- `npm install pptxgenjs` (local, in the working directory) - creating decks
+  from scratch; see pptxgenjs.md
+- python 3.10+ with `lxml` - the `scripts/` helpers (`thumbnail.py` also needs
+  `Pillow`)
 
 Not required: LibreOffice, PowerPoint, Poppler/`pdftoppm`. Legacy `.ppt` is not
 supported by officecli - ask for a `.pptx`, and do not assume a converter

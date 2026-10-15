@@ -1,8 +1,8 @@
 ---
 name: outlook
-description: "Outlook email, calendar, and Microsoft To-Do via Microsoft Graph API. Triggers on: 'outlook', 'inbox', 'calendar', 'schedule', 'meeting', 'agenda', 'm365', 'microsoft 365', 'to-do', 'tasks'."
+description: "Outlook email, calendar and Microsoft To Do for a connected Microsoft 365 or Outlook.com account, through the outlook tool (Microsoft Graph). Use for inbox, unread mail, searching, sending or replying to email, meetings, agenda, availability, room booking and To Do tasks."
 enabled: true
-tags: outlook, email, calendar, meetings, tasks, microsoft, graph
+tags: outlook, email, calendar, meetings, tasks, microsoft, m365, graph
 requires: [integration:microsoft]
 provides_tools: outlook
 tool_module: registry
@@ -10,63 +10,36 @@ tool_module: registry
 
 # Outlook (Microsoft Graph)
 
-Read and write Outlook email, calendar events, and Microsoft To-Do tasks using
-the Microsoft Graph API. Requires the user to connect their Microsoft 365
-account from **Settings → Integrations** (one-time OAuth consent).
+This skill is only loaded once the user has connected Microsoft 365 in Foxl (Settings > Connect > Integrations > Microsoft 365). Use the `outlook` tool: pass `action` plus that action's fields; CRUD actions also take `operation`.
 
-## Capabilities
+## Actions
 
-Dispatched via a single `outlook` tool that takes an `action` parameter. See the
-tool description for the full action list.
+Email:
+- `email_inbox` (`limit`), `email_read` (`messageId`, or `conversationId` for a thread)
+- `email_search` (`query`, KQL such as `from:alice subject:invoice`; optional `folder`, `limit`)
+- `email_folders` (no folder = list folders; `folderId` = list its messages)
+- `email_send` (`to`, `subject`, `body`, `cc`, `bcc`, `attachments`), `email_reply` (`messageId`, `body`, `replyAll`), `email_forward` (`messageId`, `to`, `comment`)
+- `email_draft` (`operation`: list/read/create/update/delete, `draftId`)
+- `email_attachments` (`messageId`, optional `attachmentId` to download), `email_contacts` (`query`)
+- `email_move` (`messageId`, `destinationFolderId`), `email_categories`
+- `email_update` (`messageId`; `flag`, `categories`, `importance`, `isRead`)
 
-### Email (13 actions)
-- `email_inbox` - First N messages in Inbox (default 10)
-- `email_read` - Full message by `messageId`, or thread by `conversationId`
-- `email_send` - Compose + send (HTML body, CC/BCC, attachments)
-- `email_reply` - Reply (or reply-all) to an existing message
-- `email_forward` - Forward with optional comment + attachments
-- `email_search` - KQL search across mailbox or specific folder
-- `email_folders` - List mail folders or list messages in a folder
-- `email_draft` - CRUD drafts (`operation`: list/read/create/update/delete)
-- `email_attachments` - List or download attachments on a message
-- `email_contacts` - List/search Outlook contacts
-- `email_move` - Move a message to another folder
-- `email_categories` - List the mailbox's master category list
-- `email_update` - Flag for follow-up, set categories, importance, read state
+Calendar:
+- `calendar_view` (`start`, `end`; default today), `calendar_search` (`query`), `calendar_shared_list`
+- `calendar_meeting` (`operation`: create/read/update/delete/rsvp; `meetingId`, `subject`, `start`, `end`, `timeZone`, `attendees`, `optionalAttendees`, `location`, `isAllDay`, `rsvpResponse`)
+- `calendar_availability` (`emails`, `start`, `end`, `intervalMinutes`)
+- `calendar_room_booking` (`operation`: list_rooms/list_buildings/rooms_in_building, `buildingId`)
 
-### Calendar (6 actions)
-- `calendar_view` - Events in a date range (default: today)
-- `calendar_meeting` - CRUD + RSVP (`operation`: create/read/update/delete/rsvp)
-- `calendar_availability` - getSchedule for one or more users
-- `calendar_room_booking` - List rooms / buildings / rooms-in-building
-- `calendar_search` - Search events by title/body keyword
-- `calendar_shared_list` - Calendars the user has access to
+To Do:
+- `todo_lists` (`operation`: list/create/update/delete)
+- `todo_tasks` (`listId`; `operation`: list/get/create/update/delete/complete; `title`, `status`, `dueDateTime`)
+- `todo_checklist` (`listId`, `taskId`; `operation`: list/create/update/delete/toggle)
 
-### To-Do (3 actions)
-- `todo_lists` - Manage task lists (list/create/update/delete)
-- `todo_tasks` - Manage tasks within a list (list/get/create/update/delete/complete)
-- `todo_checklist` - Manage subtasks within a task (list/create/update/delete/toggle)
+## Rules
 
-## When to use
-
-- User asks about email (inbox, unread, search, send, reply, forward)
-- User asks about calendar / schedule / meetings / availability / agenda
-- User asks about Microsoft To-Do tasks or checklists
-- User mentions "Outlook", "Office 365", or "M365"
-
-## Setup
-
-1. Open Settings → Integrations in Foxl
-2. Click "Connect Microsoft 365"
-3. Sign in with your work/school or personal Microsoft account
-4. Accept the permission scopes (Mail, Calendar, Tasks, Profile)
-5. Return to Foxl - the tool is now available
-
-## Notes
-
-- HTML email bodies are supported; plain text auto-detected based on leading `<`
-- Times default to the system timezone; pass `timeZone` to override
-- Attachments use base64-encoded inline upload (works for files up to ~3MB);
-  larger files require the upload session flow (not yet implemented)
-- Rate limits: Graph enforces per-app and per-user throttling; the tool surfaces
-  429 errors verbatim
+- Show the recipients, subject and body and get confirmation before `email_send`, `email_reply`, `email_forward`, meeting create/update/delete, RSVP or any delete.
+- A `body` starting with `<` is sent as HTML, otherwise as plain text.
+- Times without `timeZone` use this computer's time zone.
+- `attachments` are file paths inside the Foxl workspace; copy other files there first. Each is uploaded inline, so keep the total under about 3 MB.
+- Read with `email_inbox` / `email_search` first, then `email_read` only the messages needed: full bodies are large.
+- A 401 or "not connected" error means the connection expired: ask the user to reconnect Microsoft 365 in Settings. A 429 is Graph throttling; wait and retry once.

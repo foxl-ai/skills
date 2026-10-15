@@ -1,6 +1,6 @@
 ---
 name: pdf
-description: Work with PDF files or produce a .pdf - read and pull out text, harvest tables, merge or combine documents, split them apart, rotate pages, stamp watermarks, build brand-new PDFs, fill PDF forms, password-encrypt or decrypt files, extract embedded images, and OCR scanned pages into searchable text.
+description: "Read, create and modify PDF files. Use whenever a .pdf is the input or the requested output: extracting text or tables, merging, splitting, rotating, cropping or watermarking pages, generating new PDFs, filling PDF forms (fillable or flat), encrypting or decrypting, extracting images, and OCR of scanned pages."
 enabled: true
 license: MIT-0
 ---
@@ -129,9 +129,8 @@ with pdfplumber.open("document.pdf") as pdf:
                 print(row)
 ```
 
-Collect every table into a single spreadsheet. This treats the first row of
-each table as the header. (pandas is a separate install and is not part of the
-skill's virtual environment.)
+Collect every table into a single spreadsheet, treating the first row of each
+table as the header (needs `pandas` and `openpyxl`):
 
 ```python
 import pandas as pd
@@ -319,7 +318,8 @@ pypdf can encrypt on the way out. Copy the pages into a writer, encrypt with a
 user password (needed to open the file) and an owner password (needed to change
 permissions), then write. The signature is
 `encrypt(user_password, owner_password=None, use_128bit=True, permissions_flag=..., *, algorithm=None)`,
-and `algorithm="AES-256"` is supported for stronger encryption.
+and `algorithm="AES-256"` is supported for stronger encryption (AES needs the
+`cryptography` package).
 
 ```python
 from pypdf import PdfReader, PdfWriter
@@ -345,6 +345,13 @@ with open("encrypted.pdf", "wb") as out:
 | Command-line merge | qpdf | `qpdf --empty --pages ...` |
 | OCR scanned PDFs | pytesseract | convert to image first |
 | Fill PDF forms | pdf-lib or pypdf (see forms.md) | see forms.md |
+
+## Dependencies
+
+`pip install pypdf pdfplumber pypdfium2 reportlab pillow` covers this guide and
+every script in `scripts/` (checked with pypdf 6.20, pdfplumber 0.11, pypdfium2
+5.14, reportlab 5.0). The CLI tools (poppler's `pdftotext`/`pdfimages`, `qpdf`,
+`pdftk`, `tesseract`) are optional: probe with `command -v` before using one.
 
 ## Next steps
 

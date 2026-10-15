@@ -2,7 +2,7 @@
 
 `pptxgenjs` is a JavaScript library for generating `.pptx` files programmatically.
 Use it when there is no template or reference deck to start from. The notes below
-target version 4.0.1.
+were checked against version 4.0.1.
 
 ## Setup and basic structure
 
@@ -15,10 +15,13 @@ target version 4.0.1.
 - `pres.writeFile({ fileName: "..." })` writes the file and returns a Promise -
   `await` it, or chain `.then()`.
 
-A global install is only found by `require("pptxgenjs")` when Node can actually
-resolve it - for example with `NODE_PATH` pointed at the global modules directory, or
-with a local install. A bare `npm install -g pptxgenjs` on its own is not enough for
-`require` to find it.
+Install it locally in the working directory (`npm install pptxgenjs`);
+`require("pptxgenjs")` does not find a global `npm install -g`.
+
+`officecli validate` reports one schema error on EVERY pptxgenjs 4.0.1 file
+(`notesMasterIdLst` in `ppt/presentation.xml`) and one per bar chart (`c:axId` in
+`c:barChart`). Those come from the library itself and officecli still renders
+the deck; treat any OTHER validate error as real.
 
 ```js
 const pptxgen = require("pptxgenjs");
@@ -339,7 +342,7 @@ Set `size` to at least 256: it controls the raster RESOLUTION, not the on-slide
 display size (that is `w` and `h` in inches). A larger `size` gives you a sharper icon
 at the same physical dimensions.
 
-Install: `npm install -g react-icons react react-dom sharp`.
+Install (locally): `npm install react-icons react react-dom sharp`.
 
 Popular sets: `react-icons/fa` (Font Awesome), `react-icons/md` (Material Design),
 `react-icons/hi` (Heroicons), and `react-icons/bi` (Bootstrap Icons).
@@ -360,6 +363,7 @@ async function iconToDataUri(Icon, color, size) {
   return "image/png;base64," + png.toString("base64");
 }
 
+// inside an async function (CommonJS has no top-level await)
 const iconData = await iconToDataUri(FaRocket, "F96167", "256");
 slide.addImage({ data: iconData, x: 1, y: 1, w: 0.6, h: 0.6 });
 ```

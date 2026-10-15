@@ -1,33 +1,27 @@
 ---
 name: outlook-web
-description: "Legacy browser-extension Outlook skill (superseded by 'outlook'). Only used as fallback when the Graph API integration is unavailable."
-platforms: [darwin, linux, win32]
+description: "Read Outlook mail and calendar in the user's own Chrome through the Foxl browser extension (Outlook on the web). Use ONLY when the outlook tool is not available, e.g. Microsoft 365 is not connected or the user's organization blocks the connection. Read-only."
 enabled: true
-tags: outlook, email, calendar, browser-fallback, legacy
+tags: outlook, email, calendar, browser
 ---
 
-# Outlook Web (Legacy Browser Fallback)
+# Outlook on the web (browser fallback)
 
-**Superseded.** The native `outlook` skill (Microsoft Graph API) is the
-recommended path - set it up under Settings → Integrations → Connect Microsoft
-365.
+If the `outlook` tool exists, use it instead. Otherwise suggest connecting Microsoft 365 in Settings > Connect > Integrations, and fall back to this skill if the user cannot or does not want to.
 
-This skill remains in the catalog as a browser-extension-based fallback for
-environments where direct Graph API access is not possible (e.g., users who
-cannot install a custom Azure AD app for their tenant). It interacts with
-outlook.office.com via Foxl's Chrome browser extension.
+## Requirements
 
-Enable manually by setting `enabled: true` if needed. When both this skill
-and `outlook` are active, prefer `outlook` - this skill has read-only coverage
-and no write operations (compose/send/reply/reactions) for safety.
+- Foxl Chrome extension installed and connected (`browser_extension` action `status`).
+- The user is signed in to Outlook in Chrome. Work or school: `https://outlook.office.com/mail/`; personal: `https://outlook.live.com/mail/`.
 
-## Prerequisites (when enabled)
+## How
 
-- Chrome browser extension (Foxl) installed and connected
-- User logged into outlook.office.com in Chrome
-- Outlook tab open (or opened via `browser_extension new_tab`)
+1. `browser_extension` `new_tab` (or `navigate`) to the mail URL above, or `.../calendar/view/day` (`/week`) for the calendar.
+2. `snapshot` to read the page; it returns interactive elements with `[ref_N]` ids. Use `click` on a ref to open a message, then `snapshot` again to read it. `scroll` for more of the list.
+3. To search, `click` the search box, `type` the query, `press_key` `Enter`, then `snapshot`.
+4. If the page shows a sign-in screen, stop and ask the user to sign in in that tab.
 
-## Architecture
+## Limits
 
-All operations read the Outlook Web App DOM via `browser_extension` tree
-snapshots. This file is kept intentionally terse since the path is deprecated.
+- Read-only by policy: do not compose, send, reply, delete, move or RSVP through the page. For writes, the user needs the Microsoft 365 connection (`outlook` tool).
+- Summarize what you read; do not paste whole mail bodies back unless asked.

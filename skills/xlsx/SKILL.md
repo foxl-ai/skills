@@ -1,6 +1,6 @@
 ---
 name: xlsx
-description: "Create, edit, repair, or analyze spreadsheets whenever a spreadsheet file is the main input or the main output of a task. Covers opening and reworking existing .xlsx, .xlsm, .csv, and .tsv files (adding columns, computing formulas, formatting, charting, and turning malformed rows, misplaced headers, or junk rows into a clean sheet), building a brand-new workbook from scratch or from other data sources, and converting between tabular formats. Fires when the user names or points at a spreadsheet by name or path, even casually (for example a workbook in their downloads), and wants it acted on or something produced from it. The deliverable must be a spreadsheet file. Do not use when the main deliverable is a Word document, an HTML report, a standalone Python script, a database pipeline, or a Google Sheets API integration, even if tabular data is involved."
+description: "Create, edit, clean, analyze and render spreadsheets (.xlsx, .xlsm, .csv, .tsv) when a spreadsheet file is the main input or deliverable: adding columns, formulas, formatting or charts, fixing messy rows and headers, building new workbooks and financial models, converting between tabular formats, and verifying formula values. Not when the deliverable is a Word document, HTML report, standalone script, database pipeline or Google Sheets API integration."
 enabled: true
 license: MIT-0
 ---
@@ -82,12 +82,7 @@ Documenting hardcoded values:
 
 # Working with xlsx files
 
-## Overview
-
-The task may be to create a new `.xlsx`, edit an existing one, or analyze its
-contents. Each of those calls for a different tool and workflow, laid out below.
-
-## Important requirements
+## Tools
 
 **Use `officecli` for formula values, and for looking at the sheet.** It is a
 single self-contained binary that evaluates Excel formulas itself (350+
@@ -98,7 +93,8 @@ install. Verify it is present before relying on it:
 officecli --version
 ```
 
-If missing, install it (open a new shell if the binary still is not found):
+If missing, install it (open a new shell if the binary is still not found).
+Source and releases: https://github.com/iOfficeAI/OfficeCLI
 
 ```bash
 # macOS / Linux
@@ -107,11 +103,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
-Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
-Linux) - the installer picks the right binary. **Write output next to the
-workbook or into a directory you created, not `/tmp`**: the examples below use
-`/tmp` for brevity, but it does not exist on Windows - use `$env:TEMP` there, or
-a relative `out\` folder.
+The installer picks the right binary for macOS, Linux or Windows (x64/arm64).
+On first install it also copies officecli's own SKILL.md into the config folders
+of any other coding agents it detects in the home directory.
+
+The examples write into `out/`; create it first (`mkdir out`). Do not hardcode
+`/tmp`, which does not exist on Windows.
 
 Supported formats are exactly `.docx`, `.xlsx`, `.pptx`. Legacy `.xls` is NOT
 supported - ask for an `.xlsx`. `.csv`/`.tsv` are handled with pandas, or
@@ -147,9 +144,9 @@ officecli query file.xlsx 'Sheet1!row[Salary>5000]'
 officecli view file.xlsx issues --json
 
 # SEE the sheet (PNG needs a headless browser: Playwright/Chrome/Edge/Firefox)
-officecli view file.xlsx screenshot -o /tmp/sheet.png
-officecli view file.xlsx screenshot --range "Sheet1!A1:H40" -o /tmp/region.png
-officecli view file.xlsx html -o /tmp/sheet.html
+officecli view file.xlsx screenshot -o out/sheet.png
+officecli view file.xlsx screenshot --range "Sheet1!A1:H40" -o out/region.png
+officecli view file.xlsx html -o out/sheet.html
 officecli watch file.xlsx        # live preview at http://localhost:26315
 ```
 
@@ -170,11 +167,6 @@ df.describe()    # summary statistics for numeric columns
 
 df.to_excel("sales_clean.xlsx", index=False)
 ```
-
-## Excel file workflows
-
-The rest of this document covers the concrete workflows for building and editing
-workbooks.
 
 ## Always write formulas, never hardcoded values (CRITICAL)
 
@@ -236,8 +228,8 @@ does not recalculate sees blanks.
    For many cells, do it in one pass with `batch`:
    ```bash
    officecli batch output.xlsx --commands '[
-     {"op":"set","path":"/Sheet1/B10","props":{"formula":"=SUM(B2:B9)"}},
-     {"op":"set","path":"/Sheet1/C10","props":{"formula":"=AVERAGE(C2:C9)"}}
+     {"command":"set","path":"/Sheet1/B10","props":{"formula":"=SUM(B2:B9)"}},
+     {"command":"set","path":"/Sheet1/C10","props":{"formula":"=AVERAGE(C2:C9)"}}
    ]' --json
    ```
 6. **Verify and fix any errors**: see Verifying formula values below. Common
@@ -316,14 +308,17 @@ wb.save("model_v2.xlsx")
 
 Excel files created or modified by openpyxl contain formulas as strings but no
 calculated values. `officecli` evaluates a formula when you WRITE it (`set
-... --prop formula=...`), and exposes three separate readback keys so you can
+... --prop formula=...`), and reports these keys under `.data.results[0].format` of `get --json`, so you can
 tell a real value from a stale one:
 
 | key | meaning |
 |---|---|
-| `cachedValue` | the value stored in the file - what a non-recalculating reader sees |
+| `cachedValue` | the value stored in the file - what a non-recalculating reader sees. ABSENT when the cell has no cached value (fresh openpyxl output) |
 | `computedValue` | what officecli's evaluator computes NOW |
-| `uncalculated` | `true` if the formula cell has no cached value at all |
+| `evaluated` | `true` when officecli could evaluate the formula |
+
+The plain `text`/`value` of a formula cell shows the computed value, so it looks
+fine even when nothing is cached: check `cachedValue` itself.
 
 ```bash
 # one cell
@@ -372,7 +367,7 @@ Two more limits worth knowing:
 - **Dynamic arrays**: only the anchor (top-left) cell is evaluated; the spilled
   cells are produced by Excel when it opens the file.
 
-One further limit, measured on officecli 1.0.152: a formula cell with no cached
+One further limit (officecli 1.0.156): a formula cell with no cached
 value at all - which is every formula openpyxl writes, and also a dependent whose
 precedent was changed afterwards - is not listed by `view issues` at all. That
 command reports errors and stale caches, not missing ones. Confirm that
@@ -380,66 +375,37 @@ command reports errors and stale caches, not missing ones. Confirm that
 
 ## Full-workbook check with scripts/recalc.py
 
-`scripts/recalc.py` is an optional one-pass checker. The primary error check is
-officecli's `view issues` (see Checking for formula errors); reach for
-`recalc.py` when you want a single pass that adds a full cached-value scan, or
-when you want LibreOffice recalculation on a machine without officecli.
-
-Usage:
+An optional one-pass checker that never modifies the workbook (populating cached
+values is still `officecli set`). The primary check stays `officecli view
+<file> issues --json`.
 
 ```bash
-# macOS / Linux
-python scripts/recalc.py model.xlsx 60
+python scripts/recalc.py model.xlsx 60      # <file.xlsx> [timeout_seconds], default 120
 ```
 
-```powershell
-# Windows (PowerShell)
-python scripts\recalc.py model.xlsx 60
+- Engine, in order: `officecli view <file> issues --json` if officecli is on
+  PATH; else LibreOffice (`soffice --headless --convert-to xlsx`) recalculating a
+  temp COPY; else none (it says so and only scans existing cached values).
+- Then an openpyxl pass (`data_only=True`) scans every cell for `#REF!`,
+  `#DIV/0!`, `#VALUE!`, `#NAME?`, `#N/A`, `#NULL!`, `#NUM!`. Results are merged
+  per (sheet, cell).
+- Exit `0` = no error cells, `1` = errors found (or bad input: missing file,
+  non-`.xlsx` suffix), `2` = bad arguments.
+- Exit 0 does not mean caches are fresh: `formula_cache_stale` is printed under
+  `Notes (not counted as errors):`. With no engine, errors in formulas that have
+  no cached value (fresh openpyxl output) are invisible.
+
+Output on an error (`Data!B1` = `=A1/A2` with `A2 = 0`), exit 1:
+
+```text
+Recalc engine: officecli
+  $ officecli view t.xlsx issues --json
+  officecli evaluated formulas: 1 error(s), 0 note(s)
+openpyxl scan (t.xlsx): 0 cell(s) with an error string
+
+FOUND 1 Excel error cell(s):
+  Data!B1  #DIV/0!  [officecli]
 ```
-
-- The argument is `python scripts/recalc.py <file.xlsx> [timeout_seconds]`.
-- `timeout_seconds` is an integer (default `120`) applied to the engine
-  subprocess. `-h` / `--help` prints usage and exits 0; running with no
-  arguments, or a non-integer timeout, exits 2.
-- Only `.xlsx` is accepted (so not `.xlsm`); a missing file or any other suffix
-  is an error and exits 1.
-- It is a CHECKER: it never modifies the input workbook and does not write cached
-  values back. Populating cached values is still `officecli set` (see the
-  workflow and Verifying formula values above).
-
-Engine selection, in order:
-
-1. If `officecli` is on PATH, it runs `officecli view <file> issues --json`.
-   Issues with subtype `formula_eval_error` or `formula_ref_missing_sheet`, and
-   any other `formula_*` issue whose message or context contains an Excel error
-   string, count as errors. Any remaining `formula_*` issue (for example
-   `formula_cache_stale`) is printed under Notes and is NOT counted. Non-formula
-   issues are ignored.
-2. Otherwise, if `soffice` is on PATH, LibreOffice runs headless to re-save the
-   file (`soffice --headless --calc --convert-to xlsx --outdir <temp dir>
-   <file>`), producing a recalculated COPY in a temp directory that the scan then
-   reads. If no copy is produced, the original file is scanned instead.
-3. If neither is present, it prints that officecli is not on PATH and LibreOffice
-   was not found, then still scans the file's existing cached values (no crash).
-
-In every case an openpyxl pass follows. It opens the file with
-`load_workbook(..., data_only=True, read_only=True)` and scans every cell of
-every sheet for the seven error strings `#REF!`, `#DIV/0!`, `#VALUE!`, `#NAME?`,
-`#N/A`, `#NULL!`, `#NUM!`. This catches errors that a real engine (LibreOffice,
-or a file last saved by Excel) has cached, as well as error text typed literally
-into a cell. The results from both mechanisms are merged and de-duplicated per
-(sheet, cell).
-
-Exit code: `0` when no Excel error cells are found; `1` when at least one is
-found (or on the input/scan errors above).
-
-Two gotchas:
-- Exit 0 does not mean the caches are fresh - stale caches appear only as Notes.
-- With no engine present, errors inside formulas that have no cached value (fresh
-  openpyxl output) cannot be seen, because the scan only reads cached values.
-
-It works on macOS, Linux, and Windows, and needs no LibreOffice guard in front
-of it.
 
 ## Formula verification checklist
 
@@ -470,57 +436,6 @@ Testing strategy:
 - [ ] **Start small**: try formulas on 2-3 cells before applying them broadly.
 - [ ] **Verify dependencies**: every referenced cell exists.
 - [ ] **Edge cases**: zero, negative, and very large values.
-
-### Checking for formula errors
-
-Primary check - no LibreOffice needed:
-
-```bash
-officecli view output.xlsx issues --json
-```
-
-It reports `#REF!` / `#VALUE!` / `#NAME?` / `#DIV/0!` and the
-`formula_cache_stale` subtype (a `cachedValue` that disagrees with the
-evaluator). Fix what it lists, re-write the affected formulas, re-check.
-
-## Reading scripts/recalc.py output
-
-The script prints plain text, not JSON. Its shape is:
-
-- The first line is one of `Recalc engine: officecli`,
-  `Recalc engine: LibreOffice (officecli not on PATH)`, or `Recalc engine: none`.
-- On the officecli branch it then prints the command it ran
-  (`  $ officecli view <path> issues --json`) and
-  `  officecli evaluated formulas: <n> error(s), <m> note(s)`.
-- The scan line is `openpyxl scan (<filename>): <n> cell(s) with an error
-  string`, followed by one `  <Sheet>!<Cell>  <token>` line per hit.
-- The verdict is either `FOUND <n> Excel error cell(s):` with one
-  `  <Sheet>!<Cell>  <token>  [<source>]` line per cell (source is `officecli` or
-  `openpyxl`), or `No Excel errors found.`.
-- An optional trailer is `Notes (not counted as errors):` followed by
-  `  <Sheet>!<Cell>: <subtype> - <message>` lines.
-
-A run that finds an error (officecli 1.0.152; `Data!B1` held `=A1/A2` with
-`A2 = 0`) exits 1 and prints:
-
-```text
-Recalc engine: officecli
-  $ officecli view t.xlsx issues --json
-  officecli evaluated formulas: 1 error(s), 0 note(s)
-openpyxl scan (t.xlsx): 0 cell(s) with an error string
-
-FOUND 1 Excel error cell(s):
-  Data!B1  #DIV/0!  [officecli]
-```
-
-A file whose only problem is a stale cache exits 0 and ends:
-
-```text
-No Excel errors found.
-
-Notes (not counted as errors):
-  Sheet!B10: formula_cache_stale - Cached value disagrees with re-evaluation (cachedValue="0", computedValue="5"). Open in Excel to refresh, or call set to overwrite the formula.
-```
 
 ## Raw XML editing with the shared office scripts
 

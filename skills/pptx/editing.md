@@ -6,10 +6,10 @@
    what each layout offers:
 
    ```bash
-   officecli view template.pptx screenshot --grid -o /tmp/template-grid.png
+   officecli view template.pptx screenshot --grid -o out/template-grid.png
    officecli view template.pptx outline
    ```
-   Read `/tmp/template-grid.png` to see the layouts, and the outline to see
+   Read `out/template-grid.png` to see the layouts, and the outline to see
    slide titles and placeholder text. (`python scripts/thumbnail.py
    template.pptx` also works and additionally labels each tile with its
    `slideN.xml` filename and marks hidden slides - use it when you need to map
@@ -50,9 +50,8 @@
 
    ```bash
    python scripts/office/pack.py unpacked/ output.pptx
+   python scripts/office/validate.py output.pptx
    ```
-   `pack.py` takes only the input directory and the output file - there is no
-   `--original` flag.
 
 ## Scripts
 
@@ -99,10 +98,10 @@ when you start from a layout), adds the matching `<Override>` to
 `[Content_Types].xml`, and registers a slide relationship in
 `ppt/_rels/presentation.xml.rels` under a fresh `rId`.
 
-What it does NOT do is edit `<p:sldIdLst>`. Instead it prints a
-`<p:sldId id="..." r:id="..."/>` element for you to paste into `<p:sldIdLst>`. Where
-you insert it decides the slide's position in the deck, which is deliberately left as
-a human step.
+It does NOT edit `<p:sldIdLst>`: it prints a `<p:sldId id="..." r:id="..."/>`
+element for you to paste into `<p:sldIdLst>` where the slide should appear. Ids
+printed by earlier runs that were not pasted yet are skipped, so several slides can
+be added before pasting.
 
 ### clean.py
 
@@ -126,12 +125,10 @@ referenced for as long as `<p:sldIdLst>` still lists the `r:id` that targets it.
 python scripts/office/pack.py unpacked/ output.pptx   # optional --no-repair
 ```
 
-Zips the directory back into a deflated OPC container. Unless you pass `--no-repair`,
-it applies two Word-safe repairs (which matter mainly for DOCX): it clamps the
-w14/w15/w16 hex ids - `paraId`, `textId`, `durableId` - to `0x7FFFFFFF` and
-regenerates any that overflow, and it sets `xml:space="preserve"` on any `<w:t>` that
-has leading or trailing whitespace. There is no `--original` flag and no `--validate`
-flag; to validate, run `office/validate.py` or `officecli validate` separately.
+Zips the directory back into a deflated OPC container. Its default repairs are
+Word-specific and do nothing on a deck. It does not validate: run
+`python scripts/office/validate.py output.pptx` (lxml well-formedness plus
+`officecli validate`) afterwards.
 
 ### thumbnail.py
 
@@ -139,21 +136,15 @@ flag; to validate, run `office/validate.py` or `officecli validate` separately.
 python scripts/thumbnail.py input.pptx [output_prefix] [--cols N]
 ```
 
-Creates `thumbnails.jpg` with slide filenames as labels (and a crosshatch
-placeholder for hidden slides). Default 3 columns, max 12 per grid. Renders via
-`officecli` under the hood, so it needs `officecli` on PATH.
-
 **Use for template analysis only** (choosing layouts, mapping a layout to its
 `slideN.xml`). For visual QA, render full-resolution slides with
-`officecli view deck.pptx screenshot --start N --end N -o /tmp/slide-N.png` - see SKILL.md.
+`officecli view deck.pptx screenshot --start N --end N -o out/slide-N.png` - see SKILL.md.
 
-`--cols` defaults to 3 and is capped at 6. Each sheet holds up to 12 tiles (that is
-what "max 12 per grid" counts - tiles, not columns); a larger deck is split across
-`<prefix>-1.jpg`, `<prefix>-2.jpg`, and so on. The default prefix is `thumbnails`,
-giving `thumbnails.jpg`. Each tile is about 300px wide. Hidden slides (`show="0"`) get
-a crosshatched placeholder tile instead of a render. The script fails loudly rather
-than emitting a blank sheet if officecli cannot rasterize, and it requires `officecli`
-on PATH.
+Writes `thumbnails.jpg` (default prefix), each tile labeled with its `slideN.xml`
+filename; hidden slides (`show="0"`) get a crosshatched tile. `--cols` defaults to 3
+(max 6); each sheet holds up to 12 tiles, and a larger deck is split into
+`<prefix>-1.jpg`, `<prefix>-2.jpg`, ... Needs `officecli` on PATH and Pillow; it fails
+loudly rather than writing a blank sheet.
 
 ## Slide operations
 
@@ -170,14 +161,14 @@ Slide order lives in `ppt/presentation.xml`, inside `<p:sldIdLst>`.
 
 Once the structure is settled (step 4 above is done), subagents can help here if they
 are available: each slide is a separate XML file, so they can edit in parallel. When
-you hand a slide to a subagent, tell it the slide file path(s), that it must use the
-Edit tool for every change, and the formatting rules and pitfalls below.
+you hand a slide to a subagent, tell it the slide file path(s), that it must use a
+file-edit tool for every change, and the formatting rules and pitfalls below.
 
 For each slide: read the slide XML, identify every piece of placeholder content (text,
 images, charts, icons, captions), and replace each placeholder with the final content.
 
-Make changes with the Edit tool rather than `sed` or a Python script - it forces you
-to be specific about what you are changing and where, which is far more reliable.
+Make changes with your file-edit tool rather than `sed` or a Python script - it forces
+you to be specific about what you are changing and where, which is far more reliable.
 
 Formatting rules:
 - Bold every header, subheading, and inline label by setting `b="1"` on the
@@ -246,9 +237,9 @@ paragraphs bold and body paragraphs not:
 
 ### Smart quotes
 
-unpack and pack handle smart quotes automatically, but the Edit tool rewrites curly
-quotes to ASCII. So when you add NEW text that contains quotes, write them as XML
-numeric entities instead:
+unpack and pack leave existing curly quotes untouched. Some edit tools normalize curly
+quotes to ASCII, so when you add NEW text that contains quotes, write them as XML
+numeric entities:
 
 ```xml
 <a:t>The panel called it &#x201C;unmissable&#x201D; in the review.</a:t>
@@ -265,5 +256,5 @@ numeric entities instead:
 
 - **Whitespace:** set `xml:space="preserve"` on any `<a:t>` that has leading or
   trailing spaces, or they will be stripped.
-- **XML parsing:** parse with `defusedxml.minidom`, not `xml.etree.ElementTree` - the
-  latter corrupts namespaces.
+- **XML parsing:** if you script an XML change, use `lxml` (what the helper scripts
+  use), not `xml.etree.ElementTree`, which rewrites namespace prefixes to `ns0:`.

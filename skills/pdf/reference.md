@@ -36,7 +36,7 @@ for i, page in enumerate(pdf):
 pdf.close()
 ```
 
-Text extraction is important to get right: in pypdfium2 5.13.0 there is **no**
+Text extraction is important to get right: in pypdfium2 5.x (checked on 5.14) there is **no**
 `page.get_text()` method. Read text through the text page instead - call
 `page.get_textpage()`, then `get_text_range()` for the whole page (or
 `get_text_bounded(...)` for a region):
@@ -145,33 +145,11 @@ values into the page content.
 
 ## JavaScript - pdfjs-dist (Apache license)
 
-pdfjs-dist is Mozilla's PDF.js, aimed at rendering in the browser. Import it and
-point it at a worker script:
-
-```javascript
-import * as pdfjsLib from 'pdfjs-dist';
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = './pdf.worker.js';
-```
-
-Load a document and render a page onto a canvas:
-
-```javascript
-const loadingTask = pdfjsLib.getDocument('document.pdf');
-const pdf = await loadingTask.promise;
-console.log('pages:', pdf.numPages);
-
-const page = await pdf.getPage(1);
-const viewport = page.getViewport({ scale: 1.5 });
-
-const canvas = document.createElement('canvas');
-const canvasContext = canvas.getContext('2d');
-canvas.width = viewport.width;
-canvas.height = viewport.height;
-
-const task = page.render({ canvasContext, viewport });
-await task.promise;
-```
+pdfjs-dist is Mozilla's PDF.js. Prefer the Python tools above for agent work;
+reach for it when the job is already in JavaScript. In Node, import the legacy
+build (`import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'`) and open a
+file with `const pdf = await pdfjsLib.getDocument({ data: new
+Uint8Array(fs.readFileSync('document.pdf')) }).promise`.
 
 Extract the text along with each item's position. Every item exposes `str`, a
 6-element `transform` matrix (x is `transform[4]`, y is `transform[5]`), and
@@ -452,8 +430,8 @@ with open("cropped.pdf", "wb") as out:
 - For large documents, stream page by page (pypdfium2 is well suited to this)
   rather than loading everything at once, and use `qpdf --split-pages` to break a
   file into manageable pieces.
-- For text, `pdftotext -bbox-layout` is fastest for plain text, and pdfplumber
-  is the better choice for structured content and tables. Avoid
+- For text, plain `pdftotext` is fastest, and pdfplumber is the better choice
+  for structured content and tables. Avoid
   `pypdf.extract_text()` on very large documents.
 - For images, `pdfimages` beats rendering. Render at low resolution for previews
   and reserve high resolution for the final output.
@@ -503,22 +481,8 @@ qpdf --replace-input corrupted.pdf
 
 ### Text extraction returns nothing (scanned pages)
 
-Fall back to OCR. Render the pages with pypdfium2 (the same rasterizer the rest
-of this skill uses) and read each image with pytesseract, which needs the
-tesseract binary installed:
-
-```python
-import pypdfium2 as pdfium
-import pytesseract
-
-pdf = pdfium.PdfDocument("scanned.pdf")
-text = ""
-for i in range(len(pdf)):
-    image = pdf[i].render(scale=2.0).to_pil()
-    text += pytesseract.image_to_string(image)
-pdf.close()
-print(text)
-```
+The pages are images: use the OCR recipe in SKILL.md (pypdfium2 render +
+pytesseract).
 
 ## License information
 

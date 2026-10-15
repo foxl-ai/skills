@@ -1,6 +1,6 @@
 ---
 name: docx
-description: "Create, read, edit, and manipulate Microsoft Word documents (.docx). Use when the request mentions a Word doc, a word document, or a .docx file; when someone wants a professionally formatted document such as one with a table of contents, headings, page numbers, or a letterhead; when pulling content out of or reorganizing content inside a .docx; when inserting or swapping images in a document; for find-and-replace inside Word files; for tracked changes (redlines) or comments; when turning content into a polished Word document; or when a report, memo, letter, template, or similar deliverable is requested as Word or .docx. Not for PDFs, spreadsheets, Google Docs, or general coding unrelated to producing documents."
+description: "Create, read, edit, review and render Word documents (.docx). Use when a Word or .docx file is the input or the requested output: reports, memos, letters or templates delivered as Word; extracting or reorganizing content; headings, tables of contents, page numbers, letterheads; inserting images; find-and-replace; tracked changes (redlines) and comments. Not for PDFs, spreadsheets, slides or Google Docs."
 enabled: true
 license: MIT-0
 ---
@@ -35,7 +35,7 @@ officecli --version
 ```
 
 If it is missing, install it (then open a new shell if the binary is still not
-found):
+found). Source and releases: https://github.com/iOfficeAI/OfficeCLI
 
 ```bash
 # macOS / Linux
@@ -44,11 +44,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
-Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
-Linux) - the installer picks the right binary. **Write output next to the
-document or into a directory you created, not `/tmp`**: the examples below use
-`/tmp` for brevity, but it does not exist on Windows - use `$env:TEMP` there, or
-a relative `out\` folder.
+The installer picks the right binary for macOS, Linux or Windows (x64/arm64).
+On first install it also copies officecli's own SKILL.md into the config folders
+of any other coding agents it detects in the home directory.
+
+The examples write into `out/`; create it first (`mkdir out`). Do not hardcode
+`/tmp`, which does not exist on Windows.
 
 Only `.docx` is supported. Legacy binary `.doc` is NOT (see Legacy .doc below).
 
@@ -86,21 +87,21 @@ output and fix what is visibly wrong. Prefer this over converting to PDF.
 ```bash
 # PNG you can open and inspect. -o is REQUIRED for a predictable path;
 # without it officecli writes a random temp file and prints the path.
-officecli view document.docx screenshot -o /tmp/page1.png
+officecli view document.docx screenshot -o out/page1.png
 
 # Specific pages (docx uses --page; comma list or range)
-officecli view document.docx screenshot --page 1,3,5 -o /tmp/pages.png
-officecli view document.docx screenshot --page 2-5 -o /tmp/pages.png
+officecli view document.docx screenshot --page 1,3,5 -o out/pages.png
+officecli view document.docx screenshot --page 2-5 -o out/pages.png
 
 # Contact sheet: every page tiled into ONE image
-officecli view document.docx screenshot --grid -o /tmp/contact.png
-officecli view document.docx screenshot --grid 4 -o /tmp/contact.png
+officecli view document.docx screenshot --grid -o out/contact.png
+officecli view document.docx screenshot --grid 4 -o out/contact.png
 
 # Bigger raster (default 1600x1200)
-officecli view document.docx screenshot --screenshot-width 1920 -o /tmp/page.png
+officecli view document.docx screenshot --screenshot-width 1920 -o out/page.png
 
 # Static HTML snapshot (assets inlined, single file)
-officecli view document.docx html -o /tmp/document.html
+officecli view document.docx html -o out/document.html
 
 # Live preview that auto-refreshes on every officecli edit
 officecli watch document.docx        # http://localhost:26315
@@ -123,7 +124,7 @@ After writing a .docx, look at it before declaring success:
 
 1. `officecli validate document.docx` - schema check (structure only)
 2. `officecli view document.docx issues --json` - content/format problems
-3. `officecli view document.docx screenshot --grid -o /tmp/check.png` - then
+3. `officecli view document.docx screenshot --grid -o out/check.png` - then
    READ the image and list what is wrong
 4. Fix, re-render, re-read. Do not declare success on the first pass.
 
@@ -194,12 +195,14 @@ Neither is available through `officecli`, and neither is faked here:
 ## Creating New Documents with docx-js
 
 To build a `.docx` from scratch, generate it with JavaScript using the `docx`
-npm package (docx-js), then validate the result before handing it over.
+npm package (docx-js, examples checked against 9.11), then validate the result
+before handing it over.
 
-Install it once, globally:
+Install it locally in the working directory. `require('docx')` does not find a
+global (`npm install -g`) install.
 
 ```bash
-npm install -g docx
+npm install docx
 ```
 
 ### Setup
@@ -801,9 +804,8 @@ Reference section below.
 
 **Use "Foxl" as the author** for tracked changes and comments, unless the user explicitly requests use of a different name.
 
-Make string replacements with the Edit tool directly rather than writing a
-Python script to do them. A script only adds moving parts, while the Edit tool
-shows exactly which text is being replaced.
+Make string replacements with your file-edit tool directly rather than writing a
+Python script to do them: the edit shows exactly which text is being replaced.
 
 New text you add must use typographic (smart) quotes and apostrophes, not
 straight ones. You can write them as numeric character entities:
@@ -823,23 +825,15 @@ straight ones. You can write them as numeric character entities:
 
 Literal UTF-8 curly characters are equally valid XML. Because `unpack.py` leaves
 the curly quotes that were already in the document as literal characters, an
-Edit-tool match string has to use the literal character, not the entity, to line
+edit match string has to use the literal character, not the entity, to line
 up with what is on disk.
 
-`comment.py` writes one comment into all four Word comment parts, creating any
-that do not yet exist: `word/comments.xml` holds the body (id, author, UTC date,
-initials), `word/commentsExtended.xml` holds the threading (a `w15:paraId`, plus
-a `w15:paraIdParent` on a reply), `word/commentsIds.xml` holds a
-`w16cid:durableId` per comment, and `word/commentsExtensible.xml` holds the UTC
-timestamp. The first time it has to create `comments.xml` it also adds the
-relationships to `word/_rels/document.xml.rels` and the `Override` content types
-to `[Content_Types].xml`. Both `comment_id` and `--parent` are integers; the
-author defaults to Foxl and the initials to F. `--parent N` makes the comment a
-reply to comment N (it exits 1 if N is not found). On success it prints the new
-paraId and the exact anchor markup to paste into `document.xml` (the nested form
-for replies).
-
-**Adding comments:** Use `comment.py` to write the comment into all four Word comment parts (pass plain text - the script escapes it for you):
+**Adding comments:** `comment.py` writes one comment into all four Word comment
+parts (`comments.xml`, `commentsExtended.xml`, `commentsIds.xml`,
+`commentsExtensible.xml`), creating them plus their relationships and content
+types if missing. Pass plain text; the script escapes it. `comment_id` and
+`--parent` are integers (`--parent N` exits 1 if comment N does not exist). It
+prints the anchor markup to paste into `document.xml`.
 ```bash
 python scripts/comment.py unpacked/ 0 "Comment text with & and ’ written literally"
 python scripts/comment.py unpacked/ 1 "Good catch - agreed" --parent 0  # reply to comment 0
@@ -1079,13 +1073,11 @@ Adding an image to unpacked XML is four steps:
 
 ## Dependencies
 
-- **officecli**: reading, rendering (PNG/HTML), tracked changes, validation.
-  `curl -fsSL https://d.officecli.ai/install.sh | bash` - verify with
-  `officecli --version`. This is the primary tool.
-- **a headless browser** (Playwright / Chrome / Edge / Firefox): only needed
-  for `view ... screenshot`; auto-detected.
-- **docx**: `npm install -g docx` (creating new documents with docx-js)
-- **python**: `scripts/office/{unpack,pack,validate}.py` for raw-XML editing
+- **officecli** (primary): reading, rendering, tracked changes, validation; install above.
+- **a headless browser** (Playwright / Chrome / Edge / Firefox): only for
+  `view ... screenshot`; auto-detected.
+- **docx** (npm, local install): creating new documents with docx-js.
+- **python**: `scripts/office/{unpack,pack,validate}.py` for raw-XML editing.
 
 Not required: LibreOffice, Word, Poppler/`pdftoppm`, pandoc. If a task genuinely
 needs a legacy `.doc` conversion or a real PDF, see "Legacy .doc, and real PDF
