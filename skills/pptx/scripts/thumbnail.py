@@ -1,21 +1,24 @@
-"""Create thumbnail grids from PowerPoint presentation slides.
+#!/usr/bin/env python3
+"""thumbnail.py - Contact sheet of every slide in a deck, labeled by XML part.
 
-Creates a grid layout of slide thumbnails for quick visual analysis.
-Labels each thumbnail with its XML filename (e.g., slide1.xml).
-Hidden slides are shown with a placeholder pattern.
-
-Usage:
     python thumbnail.py input.pptx [output_prefix] [--cols N]
 
-Examples:
-    python thumbnail.py presentation.pptx
-    # Creates: thumbnails.jpg
+Each tile is a ~300px-wide thumbnail of one slide, captioned with the slide's
+XML filename (``slide1.xml`` ...) so a rendered layout can be mapped straight
+back to the part you would edit. Hidden slides (``show="0"`` on ``<p:sld>``) are
+not rasterized; they get a distinct crosshatched placeholder tile instead.
 
-    python thumbnail.py template.pptx grid --cols 4
-    # Creates: grid.jpg (or grid-1.jpg, grid-2.jpg for large decks)
+Rendering is delegated to ``officecli view <file> screenshot`` (which needs a
+headless browser on the machine); the tiles are then composed into a JPEG with
+Pillow. A deck of up to 12 slides yields one ``<prefix>.jpg``; a larger deck is
+split across ``<prefix>-1.jpg``, ``<prefix>-2.jpg`` ... The default prefix is
+``thumbnails`` -> ``thumbnails.jpg``.
+
+If ``officecli`` cannot rasterize a slide the script FAILS with a message naming
+what is missing, rather than emitting a blank sheet.
 """
-
 import argparse
+import io
 import shutil
 import subprocess
 import sys
@@ -23,330 +26,240 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-import defusedxml.minidom
+from lxml import etree
 from PIL import Image, ImageDraw, ImageFont
 
-THUMBNAIL_WIDTH = 300
-SCREENSHOT_WIDTH = 1280
-MAX_COLS = 6
-DEFAULT_COLS = 3
-JPEG_QUALITY = 95
-GRID_PADDING = 20
-BORDER_WIDTH = 2
-FONT_SIZE_RATIO = 0.10
-LABEL_PADDING_RATIO = 0.4
+P_NS = "http://schemas.openxmlformats.org/presentationml/2006/main"
+R_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+THUMB_W = 300          # target thumbnail width in px
+LABEL_H = 24           # caption strip height in px
+PAD = 12               # gap around and between tiles
+MAX_COLS = 6           # hard cap on columns
+PER_GRID = 12          # tiles per output image before splitting
+
+# EMU dimensions of a default 4:3 slide, used only if <p:sldSz> is absent.
+DEFAULT_CX, DEFAULT_CY = 9144000, 6858000
+
+FONT_CANDIDATES = [
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/Library/Fonts/Arial.ttf",
+]
 
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="Create thumbnail grids from PowerPoint slides."
-    )
-    parser.add_argument("input", help="Input PowerPoint file (.pptx)")
-    parser.add_argument(
-        "output_prefix",
-        nargs="?",
-        default="thumbnails",
-        help="Output prefix for image files (default: thumbnails)",
-    )
-    parser.add_argument(
-        "--cols",
-        type=int,
-        default=DEFAULT_COLS,
-        help=f"Number of columns (default: {DEFAULT_COLS}, max: {MAX_COLS})",
-    )
+def _load_font(size: int):
+    for path in FONT_CANDIDATES:
+        if Path(path).exists():
+            try:
+                return ImageFont.truetype(path, size)
+            except OSError:
+                continue
+    return ImageFont.load_default()
 
-    args = parser.parse_args()
 
-    cols = min(args.cols, MAX_COLS)
-    if args.cols > MAX_COLS:
-        print(f"Warning: Columns limited to {MAX_COLS}")
-
-    input_path = Path(args.input)
-    if not input_path.exists() or input_path.suffix.lower() != ".pptx":
-        print(f"Error: Invalid PowerPoint file: {args.input}", file=sys.stderr)
-        sys.exit(1)
-
-    output_path = Path(f"{args.output_prefix}.jpg")
-
-    if shutil.which("officecli") is None:
-        print(
-            "Error: officecli not found. Install it with:\n"
-            "  curl -fsSL https://d.officecli.ai/install.sh | bash\n"
-            "  (Windows PowerShell: irm https://d.officecli.ai/install.ps1 | iex)",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    # CRITICAL: flush first. officecli keeps edited decks in a resident process,
-    # and get_slide_info() reads the .pptx ZIP straight off disk - without this
-    # a deck just built with `officecli add` reports "No slides found".
-    subprocess.run(
-        ["officecli", "save", str(input_path.absolute())],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        check=False,
-    )
-
+def _read_zip_text(zf: zipfile.ZipFile, name: str) -> bytes | None:
     try:
-        slide_info = get_slide_info(input_path)
-
-        visible_count = sum(1 for s in slide_info if not s["hidden"])
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            visible_images = convert_to_images(input_path, temp_path, visible_count)
-
-            if not visible_images and not any(s["hidden"] for s in slide_info):
-                print("Error: No slides found", file=sys.stderr)
-                sys.exit(1)
-
-            slides = build_slide_list(slide_info, visible_images, temp_path)
-
-            grid_files = create_grids(slides, cols, THUMBNAIL_WIDTH, output_path)
-
-            print(f"Created {len(grid_files)} grid(s):")
-            for grid_file in grid_files:
-                print(f"  {grid_file}")
-
-    except Exception as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-def get_slide_info(pptx_path: Path) -> list[dict]:
-    with zipfile.ZipFile(pptx_path, "r") as zf:
-        rels_content = zf.read("ppt/_rels/presentation.xml.rels").decode("utf-8")
-        rels_dom = defusedxml.minidom.parseString(rels_content)
-
-        rid_to_slide = {}
-        for rel in rels_dom.getElementsByTagName("Relationship"):
-            rid = rel.getAttribute("Id")
-            target = rel.getAttribute("Target")
-            rel_type = rel.getAttribute("Type")
-            # Match the slide relationship type exactly - "slide" as a substring
-            # also matches slideMaster and slideLayout.
-            if not rel_type.endswith("/slide"):
-                continue
-            # Target may be relative to ppt/ ("slides/slide1.xml") OR an
-            # absolute part name ("/ppt/slides/slide1.xml"). Both are valid OPC;
-            # officecli writes the absolute form, PowerPoint writes the relative
-            # one. Keying on the basename handles both.
-            normalized = target.replace("\\", "/").rstrip("/")
-            if "/slides/" not in f"/{normalized.lstrip('/')}" and not normalized.startswith("slides/"):
-                continue
-            rid_to_slide[rid] = normalized.rsplit("/", 1)[-1]
-
-        pres_content = zf.read("ppt/presentation.xml").decode("utf-8")
-        pres_dom = defusedxml.minidom.parseString(pres_content)
-
-        slides = []
-        for sld_id in pres_dom.getElementsByTagName("p:sldId"):
-            rid = sld_id.getAttribute("r:id")
-            if rid not in rid_to_slide:
-                continue
-            name = rid_to_slide[rid]
-            # A hidden slide is `show="0"`. Per the OOXML spec that attribute
-            # lives on the SLIDE's own <p:sld> root (what officecli and
-            # PowerPoint write); some writers also mirror it onto <p:sldId>.
-            # Check both, or hidden slides are silently rendered as visible and
-            # every later slide gets the wrong label.
-            hidden = sld_id.getAttribute("show") == "0"
-            if not hidden:
-                hidden = _slide_marked_hidden(zf, name)
-            slides.append({"name": name, "hidden": hidden})
-
-        return slides
-
-
-def _slide_marked_hidden(zf: zipfile.ZipFile, slide_name: str) -> bool:
-    try:
-        slide_xml = zf.read(f"ppt/slides/{slide_name}").decode("utf-8")
+        return zf.read(name)
     except KeyError:
-        return False
-
-    dom = defusedxml.minidom.parseString(slide_xml)
-    roots = dom.getElementsByTagName("p:sld") or dom.getElementsByTagName("sld")
-    if not roots:
-        return False
-    return roots[0].getAttribute("show") == "0"
+        return None
 
 
-def build_slide_list(
-    slide_info: list[dict],
-    visible_images: list[Path],
-    temp_dir: Path,
-) -> list[tuple[Path, str]]:
-    if visible_images:
-        with Image.open(visible_images[0]) as img:
-            placeholder_size = img.size
-    else:
-        placeholder_size = (1920, 1080)
+def _slide_order(pptx: Path):
+    """Return (ordered_slide_filenames, hidden_flags, slide_aspect).
 
-    slides = []
-    visible_idx = 0
-
-    for info in slide_info:
-        if info["hidden"]:
-            placeholder_path = temp_dir / f"hidden-{info['name']}.jpg"
-            placeholder_img = create_hidden_placeholder(placeholder_size)
-            placeholder_img.save(placeholder_path, "JPEG")
-            slides.append((placeholder_path, f"{info['name']} (hidden)"))
-        else:
-            if visible_idx < len(visible_images):
-                slides.append((visible_images[visible_idx], info["name"]))
-                visible_idx += 1
-
-    return slides
-
-
-def create_hidden_placeholder(size: tuple[int, int]) -> Image.Image:
-    img = Image.new("RGB", size, color="#F0F0F0")
-    draw = ImageDraw.Draw(img)
-    line_width = max(5, min(size) // 100)
-    draw.line([(0, 0), size], fill="#CCCCCC", width=line_width)
-    draw.line([(size[0], 0), (0, size[1])], fill="#CCCCCC", width=line_width)
-    return img
-
-
-def convert_to_images(pptx_path: Path, temp_dir: Path, visible_count: int) -> list[Path]:
-    """Render each VISIBLE slide to its own PNG via officecli.
-
-    officecli's `view ... screenshot` writes exactly ONE image per invocation
-    (a --start/--end range is composed into that single file), so a per-slide
-    series needs one call per slide. --start/--end index VISIBLE slides only,
-    which matches what this function is expected to return.
+    Slides are ordered exactly as <p:sldIdLst> lists them (which is the order
+    officecli renders), mapped through presentation.xml.rels to their part
+    filenames, with each slide's show="0" state and the deck aspect ratio.
     """
-    if shutil.which("officecli") is None:
+    with zipfile.ZipFile(pptx) as zf:
+        pres = _read_zip_text(zf, "ppt/presentation.xml")
+        if pres is None:
+            raise ValueError("ppt/presentation.xml missing - not a valid PPTX")
+        pres_root = etree.fromstring(pres)
+
+        rels = _read_zip_text(zf, "ppt/_rels/presentation.xml.rels")
+        rid_to_target: dict[str, str] = {}
+        if rels is not None:
+            for rel in etree.fromstring(rels):
+                rid_to_target[rel.get("Id")] = rel.get("Target") or ""
+
+        # Deck aspect ratio from <p:sldSz>.
+        cx, cy = DEFAULT_CX, DEFAULT_CY
+        sld_sz = pres_root.find(f"{{{P_NS}}}sldSz")
+        if sld_sz is not None:
+            cx = int(sld_sz.get("cx") or DEFAULT_CX)
+            cy = int(sld_sz.get("cy") or DEFAULT_CY)
+        aspect = cy / cx
+
+        filenames: list[str] = []
+        hidden: list[bool] = []
+        sld_id_lst = pres_root.find(f"{{{P_NS}}}sldIdLst")
+        if sld_id_lst is not None:
+            for sld_id in sld_id_lst.iter(f"{{{P_NS}}}sldId"):
+                rid = sld_id.get(f"{{{R_NS}}}id")
+                target = rid_to_target.get(rid, "")
+                # Target is relative to ppt/, e.g. "slides/slide3.xml".
+                name = target.rsplit("/", 1)[-1] if target else f"(rId {rid})"
+                part = "ppt/" + target.lstrip("/") if target else None
+                is_hidden = False
+                if part:
+                    body = _read_zip_text(zf, part)
+                    if body is not None:
+                        is_hidden = (etree.fromstring(body).get("show") == "0")
+                filenames.append(name)
+                hidden.append(is_hidden)
+    return filenames, hidden, aspect
+
+
+def _render_slide(pptx: Path, index_1based: int, out_png: Path) -> None:
+    """Rasterize one slide (1-based, presentation order) with officecli.
+
+    Raises RuntimeError with an actionable message if the render did not
+    produce a real image - we never want to paste a blank tile.
+    """
+    proc = subprocess.run(
+        ["officecli", "view", str(pptx), "screenshot",
+         "--start", str(index_1based), "--end", str(index_1based),
+         "-o", str(out_png)],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0 or not out_png.exists() or out_png.stat().st_size < 100:
+        detail = (proc.stderr or proc.stdout or "").strip()
         raise RuntimeError(
-            "officecli not found. Install it with:\n"
-            "  curl -fsSL https://d.officecli.ai/install.sh | bash\n"
-            "(Windows: irm https://d.officecli.ai/install.ps1 | iex)"
+            f"officecli could not rasterize slide {index_1based}. "
+            f"PNG capture needs a headless browser (Playwright / Chrome / Edge / "
+            f"Firefox) on this machine. officecli said: {detail or '(no output)'}"
         )
-
-    images: list[Path] = []
-    for index in range(1, visible_count + 1):
-        out_path = temp_dir / f"slide-{index:03d}.png"
-        result = subprocess.run(
-            [
-                "officecli",
-                "view",
-                str(pptx_path),
-                "screenshot",
-                "--start",
-                str(index),
-                "--end",
-                str(index),
-                "--screenshot-width",
-                str(SCREENSHOT_WIDTH),
-                "-o",
-                str(out_path),
-            ],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0 or not out_path.exists():
-            detail = (result.stderr or result.stdout or "").strip()
-            raise RuntimeError(
-                f"officecli failed to render slide {index}"
-                + (f": {detail}" if detail else "")
-            )
-        images.append(out_path)
-
-    return images
-
-
-def create_grids(
-    slides: list[tuple[Path, str]],
-    cols: int,
-    width: int,
-    output_path: Path,
-) -> list[str]:
-    max_per_grid = cols * (cols + 1)
-    grid_files = []
-
-    for chunk_idx, start_idx in enumerate(range(0, len(slides), max_per_grid)):
-        end_idx = min(start_idx + max_per_grid, len(slides))
-        chunk_slides = slides[start_idx:end_idx]
-
-        grid = create_grid(chunk_slides, cols, width)
-
-        if len(slides) <= max_per_grid:
-            grid_filename = output_path
-        else:
-            stem = output_path.stem
-            suffix = output_path.suffix
-            grid_filename = output_path.parent / f"{stem}-{chunk_idx + 1}{suffix}"
-
-        grid_filename.parent.mkdir(parents=True, exist_ok=True)
-        grid.save(str(grid_filename), quality=JPEG_QUALITY)
-        grid_files.append(str(grid_filename))
-
-    return grid_files
-
-
-def create_grid(
-    slides: list[tuple[Path, str]],
-    cols: int,
-    width: int,
-) -> Image.Image:
-    font_size = int(width * FONT_SIZE_RATIO)
-    label_padding = int(font_size * LABEL_PADDING_RATIO)
-
-    with Image.open(slides[0][0]) as img:
-        aspect = img.height / img.width
-    height = int(width * aspect)
-
-    rows = (len(slides) + cols - 1) // cols
-    grid_w = cols * width + (cols + 1) * GRID_PADDING
-    grid_h = rows * (height + font_size + label_padding * 2) + (rows + 1) * GRID_PADDING
-
-    grid = Image.new("RGB", (grid_w, grid_h), "white")
-    draw = ImageDraw.Draw(grid)
-
     try:
-        font = ImageFont.load_default(size=font_size)
-    except Exception:
-        font = ImageFont.load_default()
+        with Image.open(out_png) as im:
+            im.load()
+    except Exception as exc:  # noqa: BLE001 - report whatever Pillow saw
+        raise RuntimeError(
+            f"officecli wrote an unreadable image for slide {index_1based}: {exc}"
+        ) from exc
 
-    for i, (img_path, slide_name) in enumerate(slides):
-        row, col = i // cols, i % cols
-        x = col * width + (col + 1) * GRID_PADDING
-        y_base = (
-            row * (height + font_size + label_padding * 2) + (row + 1) * GRID_PADDING
-        )
 
-        label = slide_name
-        bbox = draw.textbbox((0, 0), label, font=font)
-        text_w = bbox[2] - bbox[0]
-        draw.text(
-            (x + (width - text_w) // 2, y_base + label_padding),
-            label,
-            fill="black",
-            font=font,
-        )
+def _resize_to_width(im: Image.Image, width: int, height: int) -> Image.Image:
+    return im.convert("RGB").resize((width, height), Image.LANCZOS)
 
-        y_thumbnail = y_base + label_padding + font_size + label_padding
 
-        with Image.open(img_path) as img:
-            img.thumbnail((width, height), Image.Resampling.LANCZOS)
-            w, h = img.size
-            tx = x + (width - w) // 2
-            ty = y_thumbnail + (height - h) // 2
-            grid.paste(img, (tx, ty))
+def _placeholder_tile(width: int, height: int) -> Image.Image:
+    """A crosshatched grey tile that clearly reads as 'not rendered / hidden'."""
+    tile = Image.new("RGB", (width, height), (221, 221, 221))
+    draw = ImageDraw.Draw(tile)
+    step = 16
+    for x in range(-height, width, step):
+        draw.line([(x, 0), (x + height, height)], fill=(170, 170, 170), width=1)
+    draw.rectangle([0, 0, width - 1, height - 1], outline=(136, 136, 136), width=2)
+    font = _load_font(20)
+    text = "HIDDEN"
+    tb = draw.textbbox((0, 0), text, font=font)
+    draw.text(((width - (tb[2] - tb[0])) / 2, (height - (tb[3] - tb[1])) / 2 - tb[1]),
+              text, fill=(90, 90, 90), font=font)
+    return tile
 
-            if BORDER_WIDTH > 0:
-                draw.rectangle(
-                    [
-                        (tx - BORDER_WIDTH, ty - BORDER_WIDTH),
-                        (tx + w + BORDER_WIDTH - 1, ty + h + BORDER_WIDTH - 1),
-                    ],
-                    outline="gray",
-                    width=BORDER_WIDTH,
-                )
 
+def _tile(image: Image.Image, label: str, width: int, height: int) -> Image.Image:
+    """Thumbnail image plus a caption strip underneath."""
+    canvas = Image.new("RGB", (width, height + LABEL_H), (255, 255, 255))
+    canvas.paste(image, (0, 0))
+    draw = ImageDraw.Draw(canvas)
+    font = _load_font(13)
+    tb = draw.textbbox((0, 0), label, font=font)
+    tw = tb[2] - tb[0]
+    draw.text(((width - tw) / 2, height + (LABEL_H - (tb[3] - tb[1])) / 2 - tb[1]),
+              label, fill=(20, 20, 20), font=font)
+    return canvas
+
+
+def _compose_grid(tiles: list[Image.Image], cols: int) -> Image.Image:
+    tile_w = tiles[0].width
+    tile_h = tiles[0].height
+    rows = (len(tiles) + cols - 1) // cols
+    grid_w = cols * tile_w + (cols + 1) * PAD
+    grid_h = rows * tile_h + (rows + 1) * PAD
+    grid = Image.new("RGB", (grid_w, grid_h), (245, 245, 245))
+    for idx, tile in enumerate(tiles):
+        r, c = divmod(idx, cols)
+        x = PAD + c * (tile_w + PAD)
+        y = PAD + r * (tile_h + PAD)
+        grid.paste(tile, (x, y))
     return grid
 
 
+def build_thumbnails(pptx_path: str, prefix: str, cols: int) -> int:
+    pptx = Path(pptx_path)
+    if not pptx.exists():
+        print(f"Error: {pptx_path} does not exist", file=sys.stderr)
+        return 1
+    if pptx.suffix.lower() != ".pptx":
+        print(f"Error: {pptx_path} must be a .pptx file", file=sys.stderr)
+        return 1
+    if shutil.which("officecli") is None:
+        print("Error: officecli is not on PATH - it is required to rasterize slides. "
+              "Install it: curl -fsSL https://d.officecli.ai/install.sh | bash",
+              file=sys.stderr)
+        return 1
+
+    cols = max(1, min(cols, MAX_COLS))
+    filenames, hidden, aspect = _slide_order(pptx)
+    if not filenames:
+        print(f"Error: {pptx_path} has no slides to thumbnail", file=sys.stderr)
+        return 1
+
+    thumb_h = max(1, round(THUMB_W * aspect))
+    tiles: list[Image.Image] = []
+    tmp = Path(tempfile.mkdtemp(prefix="pptx-thumb-"))
+    try:
+        for i, (name, is_hidden) in enumerate(zip(filenames, hidden), start=1):
+            if is_hidden:
+                thumb = _placeholder_tile(THUMB_W, thumb_h)
+                label = f"{name} (hidden)"
+            else:
+                png = tmp / f"slide-{i}.png"
+                _render_slide(pptx, i, png)      # raises on failure - no blank tiles
+                with Image.open(png) as im:
+                    thumb = _resize_to_width(im, THUMB_W, thumb_h)
+                label = name
+            tiles.append(_tile(thumb, label, THUMB_W, thumb_h))
+    except RuntimeError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return 1
+    finally:
+        pass
+
+    # Split into pages of at most PER_GRID tiles.
+    pages = [tiles[i:i + PER_GRID] for i in range(0, len(tiles), PER_GRID)]
+    outputs: list[str] = []
+    for page_no, page_tiles in enumerate(pages, start=1):
+        grid = _compose_grid(page_tiles, cols)
+        if len(pages) == 1:
+            out_name = f"{prefix}.jpg"
+        else:
+            out_name = f"{prefix}-{page_no}.jpg"
+        grid.save(out_name, "JPEG", quality=85)
+        outputs.append(out_name)
+
+    shutil.rmtree(tmp, ignore_errors=True)
+
+    n_hidden = sum(hidden)
+    print(f"Wrote {len(outputs)} thumbnail sheet(s) for {len(filenames)} slide(s) "
+          f"({n_hidden} hidden) at {cols} column(s):")
+    for out_name in outputs:
+        size = Path(out_name).stat().st_size
+        print(f"  {out_name} ({size:,} bytes)")
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description="Build a labeled thumbnail grid of a deck's slides")
+    ap.add_argument("input", help="input .pptx")
+    ap.add_argument("output_prefix", nargs="?", default="thumbnails",
+                    help="output filename prefix (default: thumbnails)")
+    ap.add_argument("--cols", type=int, default=3, help="columns per grid (default 3, max 6)")
+    args = ap.parse_args()
+    sys.exit(build_thumbnails(args.input, args.output_prefix, args.cols))

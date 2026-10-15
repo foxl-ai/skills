@@ -1,103 +1,120 @@
 #!/usr/bin/env python3
 """
-Quick validation script for skills - minimal version
+Validate a skill folder against the frontmatter rules Foxl's skill loader uses.
+
+Foxl reads SKILL.md frontmatter with a simple line parser (one `key: value` per
+line, surrounding quotes stripped, `[a, b]` read as a list), so this checks the
+file the same way rather than as full YAML. Standard library only.
+
+Usage: python3 quick_validate.py <skill_directory>
+Exit 0 when valid; 1 with a message otherwise. Warnings do not fail.
 """
 
-import sys
-import os
 import re
-import yaml
+import sys
 from pathlib import Path
 
-def validate_skill(skill_path):
-    """Basic validation of a skill"""
-    skill_path = Path(skill_path)
+KNOWN_KEYS = {
+    # Read by Foxl
+    'name', 'description', 'enabled', 'tags', 'requires', 'requiresAny',
+    'platforms', 'version', 'author', 'always', 'provides_tools',
+    # Accepted by other agent runtimes (Claude Code, Agent Skills spec); Foxl ignores them
+    'license', 'allowed-tools', 'metadata', 'compatibility',
+}
+IGNORED_KEYS = {'trigger', 'schedule'}
+PLATFORMS = {'darwin', 'linux', 'win32'}
 
-    # Check SKILL.md exists
+
+def strip_quotes(value):
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+        return value[1:-1]
+    return value
+
+
+def parse_frontmatter(text):
+    text = text.replace('\r\n', '\n')
+    match = re.match(r'^---\n([\s\S]*?)\n---\n', text)
+    if not match:
+        return None
+    fields = {}
+    for line in match.group(1).split('\n'):
+        if not line.strip() or line.lstrip().startswith('#') or line[0] in ' \t':
+            continue
+        if ':' not in line:
+            continue
+        key, raw = line.split(':', 1)
+        fields[key.strip()] = raw.strip()
+    return fields
+
+
+def validate_skill(skill_path):
+    skill_path = Path(skill_path)
     skill_md = skill_path / 'SKILL.md'
     if not skill_md.exists():
-        return False, "SKILL.md not found"
+        return False, 'SKILL.md not found', []
 
-    # Read and validate frontmatter
-    content = skill_md.read_text()
-    if not content.startswith('---'):
-        return False, "No YAML frontmatter found"
+    content = skill_md.read_text(encoding='utf-8')
+    fields = parse_frontmatter(content)
+    if fields is None:
+        return False, "No frontmatter: the file must start with '---', a line per field, then '---'", []
 
-    # Extract frontmatter
-    match = re.match(r'^---\n(.*?)\n---', content, re.DOTALL)
-    if not match:
-        return False, "Invalid frontmatter format"
+    warnings = []
+    for key in fields:
+        if key in IGNORED_KEYS:
+            warnings.append(f"'{key}' is ignored by Foxl; remove it (use the Schedules page for recurring runs)")
+        elif key not in KNOWN_KEYS:
+            warnings.append(f"Unknown key '{key}' (Foxl keeps it but does not use it)")
 
-    frontmatter_text = match.group(1)
+    name = strip_quotes(fields.get('name', ''))
+    if not name:
+        return False, "Missing 'name'", warnings
+    if not re.match(r'^[a-z0-9]+(-[a-z0-9]+)*$', name) or len(name) > 64:
+        return False, f"Name '{name}' should be kebab-case (a-z, 0-9, single hyphens), at most 64 characters", warnings
+    if name != skill_path.name:
+        warnings.append(f"Name '{name}' differs from the folder name '{skill_path.name}'")
 
-    # Parse YAML frontmatter
-    try:
-        frontmatter = yaml.safe_load(frontmatter_text)
-        if not isinstance(frontmatter, dict):
-            return False, "Frontmatter must be a YAML dictionary"
-    except yaml.YAMLError as e:
-        return False, f"Invalid YAML in frontmatter: {e}"
+    raw_desc = fields.get('description', '')
+    if raw_desc in ('>', '|', '>-', '|-'):
+        warnings.append('Description is a block scalar; Foxl reads it, but a single line is safer for other parsers')
+    else:
+        if '\\"' in raw_desc:
+            return False, "Description contains '\\\"'; the line parser does not unescape it. Use single quotes inside", warnings
+        desc = strip_quotes(raw_desc)
+        if not desc:
+            return False, "Missing 'description' (it must be on the same line as 'description:')", warnings
+        if desc in ('true', 'false') or re.match(r'^-?\d+(\.\d+)?$', desc):
+            return False, 'Description must be text', warnings
+        if len(desc) > 1024:
+            return False, f'Description is {len(desc)} characters; keep it under 1024 (it is in every prompt)', warnings
+        if len(desc) > 400:
+            warnings.append(f'Description is {len(desc)} characters; shorter is cheaper (it is in every prompt)')
+        if ': ' in raw_desc and not (raw_desc.startswith('"') or raw_desc.startswith("'")):
+            warnings.append("Description contains ': '; wrap it in double quotes for YAML-based tools")
 
-    # Define allowed properties
-    ALLOWED_PROPERTIES = {'name', 'description', 'license', 'allowed-tools', 'metadata', 'compatibility'}
+    enabled = fields.get('enabled')
+    if enabled is not None and enabled not in ('true', 'false'):
+        return False, f"'enabled' must be true or false, got '{enabled}'", warnings
 
-    # Check for unexpected properties (excluding nested keys under metadata)
-    unexpected_keys = set(frontmatter.keys()) - ALLOWED_PROPERTIES
-    if unexpected_keys:
-        return False, (
-            f"Unexpected key(s) in SKILL.md frontmatter: {', '.join(sorted(unexpected_keys))}. "
-            f"Allowed properties are: {', '.join(sorted(ALLOWED_PROPERTIES))}"
-        )
+    platforms = fields.get('platforms')
+    if platforms:
+        items = [strip_quotes(p.strip()) for p in platforms.strip('[]').split(',') if p.strip()]
+        bad = [p for p in items if p not in PLATFORMS]
+        if bad:
+            return False, f"Unknown platform(s) {bad}; use darwin, linux, win32", warnings
 
-    # Check required fields
-    if 'name' not in frontmatter:
-        return False, "Missing 'name' in frontmatter"
-    if 'description' not in frontmatter:
-        return False, "Missing 'description' in frontmatter"
+    requires = fields.get('requires')
+    if requires and not (requires.startswith('[') and requires.endswith(']')):
+        warnings.append("'requires' should be an inline list, for example [jq, MY_API_TOKEN]")
 
-    # Extract name for validation
-    name = frontmatter.get('name', '')
-    if not isinstance(name, str):
-        return False, f"Name must be a string, got {type(name).__name__}"
-    name = name.strip()
-    if name:
-        # Check naming convention (kebab-case: lowercase with hyphens)
-        if not re.match(r'^[a-z0-9-]+$', name):
-            return False, f"Name '{name}' should be kebab-case (lowercase letters, digits, and hyphens only)"
-        if name.startswith('-') or name.endswith('-') or '--' in name:
-            return False, f"Name '{name}' cannot start/end with hyphen or contain consecutive hyphens"
-        # Check name length (max 64 characters per spec)
-        if len(name) > 64:
-            return False, f"Name is too long ({len(name)} characters). Maximum is 64 characters."
+    return True, 'Skill is valid', warnings
 
-    # Extract and validate description
-    description = frontmatter.get('description', '')
-    if not isinstance(description, str):
-        return False, f"Description must be a string, got {type(description).__name__}"
-    description = description.strip()
-    if description:
-        # Check for angle brackets
-        if '<' in description or '>' in description:
-            return False, "Description cannot contain angle brackets (< or >)"
-        # Check description length (max 1024 characters per spec)
-        if len(description) > 1024:
-            return False, f"Description is too long ({len(description)} characters). Maximum is 1024 characters."
 
-    # Validate compatibility field if present (optional)
-    compatibility = frontmatter.get('compatibility', '')
-    if compatibility:
-        if not isinstance(compatibility, str):
-            return False, f"Compatibility must be a string, got {type(compatibility).__name__}"
-        if len(compatibility) > 500:
-            return False, f"Compatibility is too long ({len(compatibility)} characters). Maximum is 500 characters."
-
-    return True, "Skill is valid!"
-
-if __name__ == "__main__":
+if __name__ == '__main__':
     if len(sys.argv) != 2:
-        print("Usage: python quick_validate.py <skill_directory>")
+        print('Usage: python3 quick_validate.py <skill_directory>')
         sys.exit(1)
-    
-    valid, message = validate_skill(sys.argv[1])
+    valid, message, warnings = validate_skill(sys.argv[1])
+    for warning in warnings:
+        print(f'warning: {warning}')
     print(message)
     sys.exit(0 if valid else 1)

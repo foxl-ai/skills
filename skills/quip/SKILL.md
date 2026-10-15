@@ -1,110 +1,66 @@
 ---
 name: quip
-description: Manage Amazon Quip documents via REST API
+description: "Search, read, create and edit Quip documents and folders through the Quip Automation REST API with curl. Use when the user mentions Quip, a Quip doc, spreadsheet or folder, or asks to file notes into Quip."
 enabled: true
-tags: quip, documents, meeting-notes
-requires: [curl]
-always: true
+tags: quip, documents, docs, notes
+requires: [QUIP_API_TOKEN, curl]
 ---
 
-# Quip Skill
+# Quip
 
-Manage Amazon Quip documents via REST API.
+Quip Automation API, reference: https://quip.com/dev/automation/documentation/current
 
-## Setup
+## Setup (user does this once)
 
-1. Set `QUIP_API_TOKEN` environment variable with your Quip API token
-2. Configure target folder IDs in your workspace settings
-3. API Base URL: `https://platform.quip-amazon.com/1/`
+1. Get a personal access token at https://quip.com/dev/token (making a new one invalidates the old one).
+2. Save it as `QUIP_API_TOKEN` in Foxl (Settings > Connect > Integrations, Quip), or export it in the shell.
+3. Base URL is `https://platform.quip.com`. Companies on a private Quip cloud (VPC) use their own host instead, e.g. `https://platform.acme.onquip.com` or `https://platform.quip-acme.com`; ask if the user's Quip URL is not `quip.com`.
 
-## Title Convention
+## Rules
 
-Meeting notes follow the format: `[MM/DD] Customer/Topic - Meeting Details`
+- Thread = a document, spreadsheet or chat. Its id is in the API responses; the short code in a doc URL (`quip.com/<code>/Title`) also works where the docs say "ID or secret path".
+- Confirm before creating, editing or deleting content. Check the target folder first to avoid duplicates.
+- Rate limit: 50 requests/minute and 750/hour per user. Batch metadata reads (`GET /2/threads/?ids=a,b,c`) instead of looping.
+- Every `exec` is a fresh shell, so start each command with the helper below. On Windows (cmd.exe) use `%QUIP_API_TOKEN%` and double quotes.
 
-Examples:
-- `[02/20] Acme Corp - Architecture Review`
-- `[02/20] Team Sync - Weekly Standup`
-
-## API Endpoints
-
-### List Folder Contents
 ```bash
-curl -s -H "Authorization: Bearer $QUIP_API_TOKEN" \
-  "https://platform.quip-amazon.com/1/folders/{folder_id}"
+q() { curl -s -H "Authorization: Bearer $QUIP_API_TOKEN" "$@"; }
 ```
 
-### Get Document
+## Read
+
 ```bash
-curl -s -H "Authorization: Bearer $QUIP_API_TOKEN" \
-  "https://platform.quip-amazon.com/1/threads/{thread_id}"
+q "https://platform.quip.com/1/users/current"                     # private_folder_id, shared_folder_ids, group_folder_ids
+q "https://platform.quip.com/1/folders/FOLDER_ID"                 # children: thread_id / folder_id
+q "https://platform.quip.com/1/threads/search?query=roadmap&count=10"
+q "https://platform.quip.com/2/threads/THREAD_ID"                 # metadata
+q "https://platform.quip.com/2/threads/THREAD_ID/html"            # body as HTML (paginate with cursor)
 ```
 
-Response includes `html` field with document content and `thread` metadata.
+## Create
 
-### Create Document
-```python
-import json, urllib.request, urllib.parse
+`content` may be HTML or Markdown (max 1 MB). `member_ids` = comma-separated folder or user ids; omitted, the doc goes to the user's Private folder.
 
-data = urllib.parse.urlencode({
-    'title': '[MM/DD] Customer - Topic',
-    'content': '<h1>Title</h1><p>Content in HTML</p>',
-    'format': 'html',
-    'member_ids': 'FOLDER_ID',  # folder to place doc in
-    'type': 'document'
-}).encode('utf-8')
-
-req = urllib.request.Request(
-    'https://platform.quip-amazon.com/1/threads/new-document',
-    data=data,
-    headers={
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-)
-resp = urllib.request.urlopen(req)
-result = json.loads(resp.read())
-# result['thread']['link'] = document URL
-# result['thread']['id'] = thread ID
-```
-
-### Edit Document (Append/Prepend/Replace)
-```python
-data = urllib.parse.urlencode({
-    'content': '<p>New content</p>',
-    'format': 'html',
-    'location': 0,  # 0=APPEND, 1=PREPEND, 2=AFTER_SECTION, 3=BEFORE_SECTION, 4=REPLACE_SECTION, 5=DELETE_SECTION
-    'section_id': 'optional_section_id'  # required for location 2-5
-}).encode('utf-8')
-
-req = urllib.request.Request(
-    f'https://platform.quip-amazon.com/1/threads/edit-document',
-    data=data + b'&thread_id=THREAD_ID',
-    headers={
-        'Authorization': f'Bearer {token}',
-        'Content-Type': 'application/x-www-form-urlencoded'
-    }
-)
-```
-
-### Search
 ```bash
-curl -s -H "Authorization: Bearer $QUIP_API_TOKEN" \
-  "https://platform.quip-amazon.com/1/threads/search?query=search+terms"
+q -X POST "https://platform.quip.com/1/threads/new-document" \
+  --data-urlencode "title=Weekly sync 2026-10-15" \
+  --data-urlencode "format=markdown" \
+  --data-urlencode "content=# Weekly sync
+- Item one
+- Item two" \
+  --data-urlencode "member_ids=FOLDER_ID"
 ```
 
-## HTML Format Notes
+The response is the new thread: `thread.id`, `thread.link`. `type=spreadsheet` with an HTML `<table>` creates a spreadsheet.
 
-- Use `<h1>` for title, `<h2>` for sections, `<h3>` for subsections
-- Use `<div data-section-style='5'><ul><li>...</li></ul></div>` for bullet lists
-- Use `<hr style='width:100%'>` for section dividers
-- Use `<p class='line'>` for paragraphs
-- Use `<b>` for bold, `<code>` for inline code
-- Tables: standard `<table>` with inline border styles
-- Quip assigns section IDs automatically; use thread GET to retrieve them for editing
+## Edit
 
-## Workflow
+```bash
+q -X POST "https://platform.quip.com/1/threads/edit-document" \
+  --data-urlencode "thread_id=THREAD_ID" \
+  --data-urlencode "format=html" \
+  --data-urlencode "content=<p>New paragraph</p>" \
+  --data-urlencode "location=0"
+```
 
-1. Check existing docs in folder to avoid duplicates
-2. Create document with HTML content
-3. Place in target folder via `member_ids` parameter
-4. Verify creation by checking folder contents
+`location`: 0 append (default), 1 prepend, 2 after section, 3 before section, 4 replace section, 5 delete section; 2-5 need `section_id`. Section ids are the `id` attributes on elements in the thread HTML, so read the HTML first.

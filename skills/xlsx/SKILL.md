@@ -1,76 +1,88 @@
 ---
 name: xlsx
-description: "Use this skill any time a spreadsheet file is the primary input or output. This means any task where the user wants to: open, read, edit, or fix an existing .xlsx, .xlsm, .csv, or .tsv file (e.g., adding columns, computing formulas, formatting, charting, cleaning messy data); create a new spreadsheet from scratch or from other data sources; or convert between tabular file formats. Trigger especially when the user references a spreadsheet file by name or path — even casually (like \"the xlsx in my downloads\") — and wants something done to it or produced from it. Also trigger for cleaning or restructuring messy tabular data files (malformed rows, misplaced headers, junk data) into proper spreadsheets. The deliverable must be a spreadsheet file. Do NOT trigger when the primary deliverable is a Word document, HTML report, standalone Python script, database pipeline, or Google Sheets API integration, even if tabular data is involved."
+description: "Create, edit, clean, analyze and render spreadsheets (.xlsx, .xlsm, .csv, .tsv) when a spreadsheet file is the main input or deliverable: adding columns, formulas, formatting or charts, fixing messy rows and headers, building new workbooks and financial models, converting between tabular formats, and verifying formula values. Not when the deliverable is a Word document, HTML report, standalone script, database pipeline or Google Sheets API integration."
 enabled: true
-license: Proprietary. LICENSE.txt has complete terms
+license: MIT-0
 ---
 
-# Requirements for Outputs
+# Requirements for outputs
 
 ## All Excel files
 
-### Professional Font
-- Use a consistent, professional font (e.g., Arial, Times New Roman) for all deliverables unless otherwise instructed by the user
+### Font
 
-### Zero Formula Errors
-- Every Excel model MUST be delivered with ZERO formula errors (#REF!, #DIV/0!, #VALUE!, #N/A, #NAME?)
+Use one consistent, professional typeface across the entire deliverable (for
+example Arial or Times New Roman), unless the user asks for something different.
 
-### Preserve Existing Templates (when updating templates)
-- Study and EXACTLY match existing format, style, and conventions when modifying files
-- Never impose standardized formatting on files with established patterns
-- Existing template conventions ALWAYS override these guidelines
+### Formula errors
+
+Every model you hand over must contain zero formula errors. The codes to watch
+for are `#REF!`, `#DIV/0!`, `#VALUE!`, `#N/A`, and `#NAME?`.
+
+### Updating an existing template
+
+When you update a file that already has an established format, study its layout,
+style, and conventions and match them exactly. Never force the standardized
+formatting from this skill onto a file that already follows its own patterns:
+the template's conventions take precedence over every guideline here.
 
 ## Financial models
 
-### Color Coding Standards
-Unless otherwise stated by the user or existing template
+These conventions follow the industry-standard practice and apply unless the
+user or an existing template says otherwise.
 
-#### Industry-Standard Color Conventions
-- **Blue text (RGB: 0,0,255)**: Hardcoded inputs, and numbers users will change for scenarios
-- **Black text (RGB: 0,0,0)**: ALL formulas and calculations
-- **Green text (RGB: 0,128,0)**: Links pulling from other worksheets within same workbook
-- **Red text (RGB: 255,0,0)**: External links to other files
-- **Yellow background (RGB: 255,255,0)**: Key assumptions needing attention or cells that need to be updated
+### Color coding
 
-### Number Formatting Standards
+| meaning | style | RGB | hex |
+|---|---|---|---|
+| hardcoded inputs; numbers users change for scenarios | blue text | 0,0,255 | `0000FF` |
+| every formula and calculation | black text | 0,0,0 | `000000` |
+| links pulling from other worksheets in the same workbook | green text | 0,128,0 | `008000` |
+| external links to other files | red text | 255,0,0 | `FF0000` |
+| key assumptions needing attention; cells that need updating | yellow background (fill) | 255,255,0 | `FFFF00` |
 
-#### Required Format Rules
-- **Years**: Format as text strings (e.g., "2024" not "2,024")
-- **Currency**: Use $#,##0 format; ALWAYS specify units in headers ("Revenue ($mm)")
-- **Zeros**: Use number formatting to make all zeros "-", including percentages (e.g., "$#,##0;($#,##0);-")
-- **Percentages**: Default to 0.0% format (one decimal)
-- **Multiples**: Format as 0.0x for valuation multiples (EV/EBITDA, P/E)
-- **Negative numbers**: Use parentheses (123) not minus -123
+### Number formats
 
-### Formula Construction Rules
+- Years: store them as text strings so `2024` never renders as `2,024`.
+- Currency: `$#,##0`; always state the unit in the header, e.g. `Revenue ($mm)`.
+- Zeros: display them as `-` through number formatting, percentages included;
+  example format string `$#,##0;($#,##0);-`.
+- Percentages: default to `0.0%` (one decimal place).
+- Valuation multiples (EV/EBITDA, P/E): `0.0x`.
+- Negatives: parentheses, so `(123)` rather than `-123`.
 
-#### Assumptions Placement
-- Place ALL assumptions (growth rates, margins, multiples, etc.) in separate assumption cells
-- Use cell references instead of hardcoded values in formulas
-- Example: Use =B5*(1+$B$6) instead of =B5*1.05
+### Formula construction
 
-#### Formula Error Prevention
-- Verify all cell references are correct
-- Check for off-by-one errors in ranges
-- Ensure consistent formulas across all projection periods
-- Test with edge cases (zero values, negative numbers)
-- Verify no unintended circular references
+Assumptions placement:
 
-#### Documentation Requirements for Hardcodes
-- Comment or in cells beside (if end of table). Format: "Source: [System/Document], [Date], [Specific Reference], [URL if applicable]"
-- Examples:
-  - "Source: Company 10-K, FY2024, Page 45, Revenue Note, [SEC EDGAR URL]"
-  - "Source: Company 10-Q, Q2 2025, Exhibit 99.1, [SEC EDGAR URL]"
-  - "Source: Bloomberg Terminal, 8/15/2025, AAPL US Equity"
-  - "Source: FactSet, 8/20/2025, Consensus Estimates Screen"
+- Give every assumption (growth rates, margins, multiples, and the like) its own
+  dedicated cell.
+- Reference those cells from your formulas rather than embedding the constant
+  directly.
+- Right: `=B5*(1+$B$6)`. Wrong: `=B5*1.05`.
 
-# XLSX creation, editing, and analysis
+Error prevention:
 
-## Overview
+- Verify every cell reference.
+- Check ranges for off-by-one mistakes.
+- Keep formulas consistent across all projection periods.
+- Test edge cases such as zero values and negative numbers.
+- Confirm there are no unintended circular references.
 
-A user may ask you to create, edit, or analyze the contents of an .xlsx file. You have different tools and workflows available for different tasks.
+Documenting hardcoded values:
 
-## Important Requirements
+- Record the source in a cell comment, or in the adjacent cell when the value
+  sits at the end of a table.
+- Citation pattern: `Source: [System/Document], [Date], [Specific Reference], [URL if applicable]`
+- Worked examples:
+  - `Source: Northwind Industries 10-K, FY2023, p. 74, Note 9 (Segment Reporting), https://www.sec.gov/edgar/<accession>`
+  - `Source: Northwind Industries 10-Q, Q3 2024, Exhibit 99.2, https://www.sec.gov/edgar/<accession>`
+  - `Source: Bloomberg, 2024-08-06, NWND US Equity`
+  - `Source: FactSet, 2024-08-06, Consensus Estimates screen`
+
+# Working with xlsx files
+
+## Tools
 
 **Use `officecli` for formula values, and for looking at the sheet.** It is a
 single self-contained binary that evaluates Excel formulas itself (350+
@@ -81,7 +93,8 @@ install. Verify it is present before relying on it:
 officecli --version
 ```
 
-If missing, install it (open a new shell if the binary still is not found):
+If missing, install it (open a new shell if the binary is still not found).
+Source and releases: https://github.com/iOfficeAI/OfficeCLI
 
 ```bash
 # macOS / Linux
@@ -90,11 +103,12 @@ curl -fsSL https://d.officecli.ai/install.sh | bash
 irm https://d.officecli.ai/install.ps1 | iex
 ```
 
-Runs on macOS, Linux and Windows (x64 and arm64 on each, plus musl/Alpine
-Linux) - the installer picks the right binary. **Write output next to the
-workbook or into a directory you created, not `/tmp`**: the examples below use
-`/tmp` for brevity, but it does not exist on Windows - use `$env:TEMP` there, or
-a relative `out\` folder.
+The installer picks the right binary for macOS, Linux or Windows (x64/arm64).
+On first install it also copies officecli's own SKILL.md into the config folders
+of any other coding agents it detects in the home directory.
+
+The examples write into `out/`; create it first (`mkdir out`). Do not hardcode
+`/tmp`, which does not exist on Windows.
 
 Supported formats are exactly `.docx`, `.xlsx`, `.pptx`. Legacy `.xls` is NOT
 supported - ask for an `.xlsx`. `.csv`/`.tsv` are handled with pandas, or
@@ -130,67 +144,54 @@ officecli query file.xlsx 'Sheet1!row[Salary>5000]'
 officecli view file.xlsx issues --json
 
 # SEE the sheet (PNG needs a headless browser: Playwright/Chrome/Edge/Firefox)
-officecli view file.xlsx screenshot -o /tmp/sheet.png
-officecli view file.xlsx screenshot --range "Sheet1!A1:H40" -o /tmp/region.png
-officecli view file.xlsx html -o /tmp/sheet.html
+officecli view file.xlsx screenshot -o out/sheet.png
+officecli view file.xlsx screenshot --range "Sheet1!A1:H40" -o out/region.png
+officecli view file.xlsx html -o out/sheet.html
 officecli watch file.xlsx        # live preview at http://localhost:26315
 ```
 
-### Data analysis with pandas
-For data analysis, visualization, and basic operations, use **pandas** which provides powerful data manipulation capabilities:
+### pandas for analysis
+
+pandas is the tool for data analysis, quick visualization, and everyday
+operations - it has strong data-manipulation capabilities.
 
 ```python
 import pandas as pd
 
-# Read Excel
-df = pd.read_excel('file.xlsx')  # Default: first sheet
-all_sheets = pd.read_excel('file.xlsx', sheet_name=None)  # All sheets as dict
+df = pd.read_excel("sales.xlsx")                       # first sheet by default
+sheets = pd.read_excel("sales.xlsx", sheet_name=None)  # dict of every sheet
 
-# Analyze
-df.head()      # Preview data
-df.info()      # Column info
-df.describe()  # Statistics
+df.head()        # preview the leading rows
+df.info()        # column names, dtypes, non-null counts
+df.describe()    # summary statistics for numeric columns
 
-# Write Excel
-df.to_excel('output.xlsx', index=False)
+df.to_excel("sales_clean.xlsx", index=False)
 ```
 
-## Excel File Workflows
+## Always write formulas, never hardcoded values (CRITICAL)
 
-## CRITICAL: Use Formulas, Not Hardcoded Values
+Always write real Excel formulas. Never compute a number in Python and write the
+result into the cell. Writing the formula keeps the workbook dynamic and
+updateable, so it recalculates whenever its source data changes. This applies to
+every calculation - totals, percentages, ratios, differences, and so on.
 
-**Always use Excel formulas instead of calculating values in Python and hardcoding them.** This ensures the spreadsheet remains dynamic and updateable.
+Wrong (the computed number is frozen into the cell):
 
-### ❌ WRONG - Hardcoding Calculated Values
 ```python
-# Bad: Calculating in Python and hardcoding result
-total = df['Sales'].sum()
-sheet['B10'] = total  # Hardcodes 5000
-
-# Bad: Computing growth rate in Python
-growth = (df.iloc[-1]['Revenue'] - df.iloc[0]['Revenue']) / df.iloc[0]['Revenue']
-sheet['C5'] = growth  # Hardcodes 0.15
-
-# Bad: Python calculation for average
-avg = sum(values) / len(values)
-sheet['D20'] = avg  # Hardcodes 42.5
+ws["B12"] = df["revenue"].sum()                                          # e.g. 48200 baked in
+ws["C12"] = (df["revenue"].iloc[-1] - df["revenue"].iloc[0]) / df["revenue"].iloc[0]  # e.g. 0.32 baked in
+ws["D12"] = sum(df["margin"]) / len(df["margin"])                        # e.g. 0.18 baked in
 ```
 
-### ✅ CORRECT - Using Excel Formulas
+Right (assign formula strings so the sheet stays live):
+
 ```python
-# Good: Let Excel calculate the sum
-sheet['B10'] = '=SUM(B2:B9)'
-
-# Good: Growth rate as Excel formula
-sheet['C5'] = '=(C4-C2)/C2'
-
-# Good: Average using Excel function
-sheet['D20'] = '=AVERAGE(D2:D19)'
+ws["B12"] = "=SUM(B2:B11)"
+ws["C12"] = "=(B11-B2)/B2"
+ws["D12"] = "=AVERAGE(D2:D11)"
 ```
 
-This applies to ALL calculations - totals, percentages, ratios, differences, etc. The spreadsheet should be able to recalculate when source data changes.
-
-## Common Workflow
+## Common workflow
 
 Two routes. Prefer the first when formulas matter.
 
@@ -215,10 +216,10 @@ Then verify (see Verifying formula values below).
 openpyxl writes formulas as STRINGS with no cached values, so a reader that
 does not recalculate sees blanks.
 
-1. **Choose tool**: pandas for data, openpyxl for formulas/formatting
-2. **Create/Load**: Create new workbook or load existing file
-3. **Modify**: Add/edit data, formulas, and formatting
-4. **Save**: Write to file
+1. **Choose the tool**: pandas for data, openpyxl for formulas and formatting.
+2. **Create or load**: make a new workbook or open the existing file.
+3. **Modify**: add or edit data, formulas, and formatting.
+4. **Save to disk**.
 5. **Populate formula values (MANDATORY IF USING FORMULAS)**: re-write each
    formula cell through `officecli set`, which evaluates it:
    ```bash
@@ -227,16 +228,16 @@ does not recalculate sees blanks.
    For many cells, do it in one pass with `batch`:
    ```bash
    officecli batch output.xlsx --commands '[
-     {"op":"set","path":"/Sheet1/B10","props":{"formula":"=SUM(B2:B9)"}},
-     {"op":"set","path":"/Sheet1/C10","props":{"formula":"=AVERAGE(C2:C9)"}}
+     {"command":"set","path":"/Sheet1/B10","props":{"formula":"=SUM(B2:B9)"}},
+     {"command":"set","path":"/Sheet1/C10","props":{"formula":"=AVERAGE(C2:C9)"}}
    ]' --json
    ```
 6. **Verify and fix any errors**: see Verifying formula values below. Common
    errors to fix:
-   - `#REF!`: Invalid cell references
-   - `#DIV/0!`: Division by zero
-   - `#VALUE!`: Wrong data type in formula
-   - `#NAME?`: Unrecognized formula name
+   - `#REF!`: invalid cell reference
+   - `#DIV/0!`: division by zero
+   - `#VALUE!`: wrong data type in a formula
+   - `#NAME?`: formula name not recognized
 
 **Flush before a non-officecli program reads the file.** officecli keeps a
 resident process, so openpyxl/pandas/an upload may otherwise read a stale file:
@@ -246,74 +247,78 @@ officecli save output.xlsx     # flush, keep resident warm
 officecli close output.xlsx    # flush + release
 ```
 
-### Creating new Excel files
+Note: a workbook created by openpyxl names its first sheet `Sheet`, not
+`Sheet1`, so officecli paths must use the real sheet name (`/Sheet/B10`). A wrong
+name is answered with `Sheet not found ... Available sheets: [Sheet]`.
+
+### Creating a new workbook with openpyxl
+
+openpyxl is the choice when formulas and formatting matter.
 
 ```python
-# Using openpyxl for formulas and formatting
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
 
 wb = Workbook()
-sheet = wb.active
+ws = wb.active
+ws.title = "Model"
 
-# Add data
-sheet['A1'] = 'Hello'
-sheet['B1'] = 'World'
-sheet.append(['Row', 'of', 'data'])
+ws["A1"] = "Growth rate"
+ws["B1"] = 0.08
+ws["B1"].font = Font(bold=True, color="0000FF")             # blue hardcoded input
+ws["B1"].fill = PatternFill("solid", start_color="FFFF00")  # yellow: assumption to review
 
-# Add formula
-sheet['B2'] = '=SUM(A1:A10)'
+ws.append(["Year", "Revenue ($mm)"])   # header row lands next
+ws["A3"] = 2024
+ws["B3"] = 100
+ws["A4"] = 2025
+ws["B4"] = "=B3*(1+$B$1)"               # formula string referencing the assumption cell
 
-# Formatting
-sheet['A1'].font = Font(bold=True, color='FF0000')
-sheet['A1'].fill = PatternFill('solid', start_color='FFFF00')
-sheet['A1'].alignment = Alignment(horizontal='center')
+ws["A2"].alignment = Alignment(horizontal="center")
+ws.column_dimensions["A"].width = 16
 
-# Column width
-sheet.column_dimensions['A'].width = 20
-
-wb.save('output.xlsx')
+wb.save("model.xlsx")
 ```
 
-### Editing existing Excel files
+### Editing an existing workbook with openpyxl
+
+Loading with openpyxl preserves the existing formulas and formatting.
 
 ```python
-# Using openpyxl to preserve formulas and formatting
 from openpyxl import load_workbook
 
-# Load existing file
-wb = load_workbook('existing.xlsx')
-sheet = wb.active  # or wb['SheetName'] for specific sheet
+wb = load_workbook("model.xlsx")     # formulas and formatting preserved
+ws = wb.active                        # or wb["Model"]
 
-# Working with multiple sheets
-for sheet_name in wb.sheetnames:
-    sheet = wb[sheet_name]
-    print(f"Sheet: {sheet_name}")
+for name in wb.sheetnames:
+    sheet = wb[name]
+    print(name, sheet.max_row, sheet.max_column)
 
-# Modify cells
-sheet['A1'] = 'New Value'
-sheet.insert_rows(2)  # Insert row at position 2
-sheet.delete_cols(3)  # Delete column 3
+ws["C1"] = "Reviewed"
+ws.insert_rows(2)                     # push existing rows down by one
+ws.delete_cols(4)                     # drop column D
 
-# Add new sheet
-new_sheet = wb.create_sheet('NewSheet')
-new_sheet['A1'] = 'Data'
+notes = wb.create_sheet("Notes")
+notes["A1"] = "Change log"
 
-wb.save('modified.xlsx')
+wb.save("model_v2.xlsx")
 ```
 
 ## Verifying formula values
 
 Excel files created or modified by openpyxl contain formulas as strings but no
 calculated values. `officecli` evaluates a formula when you WRITE it (`set
-... --prop formula=...`), and exposes three separate readback keys so you can
+... --prop formula=...`), and reports these keys under `.data.results[0].format` of `get --json`, so you can
 tell a real value from a stale one:
 
 | key | meaning |
 |---|---|
-| `cachedValue` | the value stored in the file - what a non-recalculating reader sees |
+| `cachedValue` | the value stored in the file - what a non-recalculating reader sees. ABSENT when the cell has no cached value (fresh openpyxl output) |
 | `computedValue` | what officecli's evaluator computes NOW |
-| `uncalculated` | `true` if the formula cell has no cached value at all |
+| `evaluated` | `true` when officecli could evaluate the formula |
+
+The plain `text`/`value` of a formula cell shows the computed value, so it looks
+fine even when nothing is cached: check `cachedValue` itself.
 
 ```bash
 # one cell
@@ -362,108 +367,147 @@ Two more limits worth knowing:
 - **Dynamic arrays**: only the anchor (top-left) cell is evaluated; the spilled
   cells are produced by Excel when it opens the file.
 
-### If you have LibreOffice and want a full-workbook recalculation
+One further limit (officecli 1.0.156): a formula cell with no cached
+value at all - which is every formula openpyxl writes, and also a dependent whose
+precedent was changed afterwards - is not listed by `view issues` at all. That
+command reports errors and stale caches, not missing ones. Confirm that
+`cachedValue` is non-null, or simply re-`set` every formula cell.
 
-`scripts/recalc.py` still exists and does a true `calculateAll()` across every
-sheet, then scans all cells for Excel errors. It requires LibreOffice
-(`soffice`), which is usually NOT installed - check first and do not make it
-part of the default path:
+## Full-workbook check with scripts/recalc.py
 
-```bash
-# macOS / Linux
-command -v soffice && python scripts/recalc.py output.xlsx 30
-```
-
-```powershell
-# Windows PowerShell
-if (Get-Command soffice -ErrorAction SilentlyContinue) { python scripts/recalc.py output.xlsx 30 }
-```
-
-Note the helper it uses (`scripts/office/soffice.py`) carries a Linux-only
-sandbox shim (LD_PRELOAD + gcc), so on macOS/Windows this path works only if
-`soffice` is already on PATH.
-
-Prefer the officecli route above; reach for this only when you specifically need
-a whole-workbook recalculation by a real spreadsheet engine.
-
-## Formula Verification Checklist
-
-Quick checks to ensure formulas work correctly:
-
-### Essential Verification
-- [ ] **Test 2-3 sample references**: Verify they pull correct values before building full model
-- [ ] **Column mapping**: Confirm Excel columns match (e.g., column 64 = BL, not BK)
-- [ ] **Row offset**: Remember Excel rows are 1-indexed (DataFrame row 5 = Excel row 6)
-
-### Common Pitfalls
-- [ ] **NaN handling**: Check for null values with `pd.notna()`
-- [ ] **Far-right columns**: FY data often in columns 50+ 
-- [ ] **Multiple matches**: Search all occurrences, not just first
-- [ ] **Division by zero**: Check denominators before using `/` in formulas (#DIV/0!)
-- [ ] **Wrong references**: Verify all cell references point to intended cells (#REF!)
-- [ ] **Cross-sheet references**: Use correct format (Sheet1!A1) for linking sheets
-
-### Formula Testing Strategy
-- [ ] **Start small**: Test formulas on 2-3 cells before applying broadly
-- [ ] **Verify dependencies**: Check all cells referenced in formulas exist
-- [ ] **Test edge cases**: Include zero, negative, and very large values
-
-### Checking for formula errors
-
-Primary check - no LibreOffice needed:
+An optional one-pass checker that never modifies the workbook (populating cached
+values is still `officecli set`). The primary check stays `officecli view
+<file> issues --json`.
 
 ```bash
-officecli view output.xlsx issues --json
+python scripts/recalc.py model.xlsx 60      # <file.xlsx> [timeout_seconds], default 120
 ```
 
-It reports `#REF!` / `#VALUE!` / `#NAME?` / `#DIV/0!` and the
-`formula_cache_stale` subtype (a `cachedValue` that disagrees with the
-evaluator). Fix what it lists, re-write the affected formulas, re-check.
+- Engine, in order: `officecli view <file> issues --json` if officecli is on
+  PATH; else LibreOffice (`soffice --headless --convert-to xlsx`) recalculating a
+  temp COPY; else none (it says so and only scans existing cached values).
+- Then an openpyxl pass (`data_only=True`) scans every cell for `#REF!`,
+  `#DIV/0!`, `#VALUE!`, `#NAME?`, `#N/A`, `#NULL!`, `#NUM!`. Results are merged
+  per (sheet, cell).
+- Exit `0` = no error cells, `1` = errors found (or bad input: missing file,
+  non-`.xlsx` suffix), `2` = bad arguments.
+- Exit 0 does not mean caches are fresh: `formula_cache_stale` is printed under
+  `Notes (not counted as errors):`. With no engine, errors in formulas that have
+  no cached value (fresh openpyxl output) are invisible.
 
-### Interpreting scripts/recalc.py Output (LibreOffice route only)
-When you deliberately used the `scripts/recalc.py` fallback, it returns JSON
-with error details:
-```json
-{
-  "status": "success",           // or "errors_found"
-  "total_errors": 0,              // Total error count
-  "total_formulas": 42,           // Number of formulas in file
-  "error_summary": {              // Only present if errors found
-    "#REF!": {
-      "count": 2,
-      "locations": ["Sheet1!B5", "Sheet1!C10"]
-    }
-  }
-}
+Output on an error (`Data!B1` = `=A1/A2` with `A2 = 0`), exit 1:
+
+```text
+Recalc engine: officecli
+  $ officecli view t.xlsx issues --json
+  officecli evaluated formulas: 1 error(s), 0 note(s)
+openpyxl scan (t.xlsx): 0 cell(s) with an error string
+
+FOUND 1 Excel error cell(s):
+  Data!B1  #DIV/0!  [officecli]
 ```
 
-## Best Practices
+## Formula verification checklist
 
-### Library Selection
-- **pandas**: Best for data analysis, bulk operations, and simple data export
-- **openpyxl**: Best for complex formatting, formulas, and Excel-specific features
+Essential checks:
+
+- [ ] **Spot-check references**: verify 2-3 sample references return the correct
+  values before building the full model.
+- [ ] **Column mapping**: confirm the column letters. 1-based column 64 is `BL`,
+  not `BK` (`openpyxl.utils.get_column_letter(64) == 'BL'`, measured).
+- [ ] **Row offset**: Excel rows are 1-based and pandas positions are 0-based.
+  With one header row in Excel row 1, DataFrame position `i` sits on Excel row
+  `i + 2` (measured: position 5 -> row 7). Without a header (`header=None`) it is
+  `i + 1`.
+
+Common pitfalls:
+
+- [ ] **NaN**: test for nulls with `pd.notna()`.
+- [ ] **Far-right columns**: fiscal-year data often lives in columns 50+.
+- [ ] **Multiple matches**: search every occurrence, not just the first.
+- [ ] **Division by zero**: check denominators before using `/` in a formula
+  (`#DIV/0!`).
+- [ ] **Wrong references**: confirm each reference hits the intended cell
+  (`#REF!`).
+- [ ] **Cross-sheet references**: use the `Sheet1!A1` form when linking sheets.
+
+Testing strategy:
+
+- [ ] **Start small**: try formulas on 2-3 cells before applying them broadly.
+- [ ] **Verify dependencies**: every referenced cell exists.
+- [ ] **Edge cases**: zero, negative, and very large values.
+
+## Raw XML editing with the shared office scripts
+
+Reach for this only for changes that officecli and openpyxl cannot express;
+prefer officecli. The scripts live in `scripts/office/`. Work in this order:
+unpack -> edit the XML by hand -> pack -> validate the packed file -> then
+`officecli view <file> issues --json`.
+
+- `python scripts/office/unpack.py <office_file> <output_dir> [--no-merge-runs] [--no-simplify-redlines]`
+  Accepts `.docx`, `.pptx`, or `.xlsx`. It extracts the ZIP and pretty-prints
+  every `.xml`/`.rels` part. The two flags are DOCX-only and do nothing for a
+  workbook.
+- `python scripts/office/pack.py <input_dir> <output_file> [--no-repair]`
+  The output suffix must be `.docx`, `.pptx`, or `.xlsx`; it writes a deflated
+  ZIP. The default repairs are Word-specific (w14/w15/w16 `paraId`/`textId`/
+  `durableId` clamped to `0x7FFFFFFF`, and `xml:space="preserve"` set on `<w:t>`
+  runs with edge whitespace), so on a workbook they are a no-op; `--no-repair`
+  skips them.
+- `python scripts/office/validate.py <path> [-v]`
+  `<path>` is an unpacked directory or a packed `.docx`/`.pptx`/`.xlsx`. Layer 1
+  checks lxml well-formedness of every `.xml`/`.rels` part (`-v` lists each part
+  that parses). Layer 2 runs `officecli validate <file>` for the OpenXML schema
+  check, but only for a PACKED file and only when officecli is on PATH; a
+  directory reports `skipped (pack first to run the schema check)`. Exit is 0
+  only if every layer that ran passed; a schema failure exits 1.
+
+All three scripts exit 1 on error.
+
+OOXML detail: a formula cell stores its formula in `<f>` and its cached value in
+`<v>`. Editing an input cell by hand does not update the `<v>` of the formulas
+that depend on it, so re-`set` the affected formula cells afterwards.
+
+## Best practices
+
+### Library selection
+
+- **pandas**: data analysis, bulk operations, and simple data export.
+- **openpyxl**: complex formatting, formulas, and Excel-specific features.
 
 ### Working with openpyxl
-- Cell indices are 1-based (row=1, column=1 refers to cell A1)
-- Use `data_only=True` to read calculated values: `load_workbook('file.xlsx', data_only=True)`
-- **Warning**: If opened with `data_only=True` and saved, formulas are replaced with values and permanently lost
-- For large files: Use `read_only=True` for reading or `write_only=True` for writing
+
+- Cell indices are 1-based: `row=1, column=1` is `A1`.
+- Read cached calculated values with `load_workbook(path, data_only=True)`.
+- Warning: saving a workbook that was opened with `data_only=True` replaces its
+  formulas with values - the formulas are lost for good.
+- For large files, `read_only=True` to read and `write_only=True` to write.
+- Measured: `data_only=True` returns `None` for a formula cell that openpyxl
+  itself wrote (no cached value exists).
 - Formulas are preserved but not evaluated - re-write each formula cell through
   `officecli set ... --prop formula="..."` to populate its cached value (see
   Verifying formula values)
 
 ### Working with pandas
-- Specify data types to avoid inference issues: `pd.read_excel('file.xlsx', dtype={'id': str})`
-- For large files, read specific columns: `pd.read_excel('file.xlsx', usecols=['A', 'C', 'E'])`
-- Handle dates properly: `pd.read_excel('file.xlsx', parse_dates=['date_column'])`
 
-## Code Style Guidelines
-**IMPORTANT**: When generating Python code for Excel operations:
-- Write minimal, concise Python code without unnecessary comments
-- Avoid verbose variable names and redundant operations
-- Avoid unnecessary print statements
+- Pin dtypes to avoid inference problems: `pd.read_excel(path, dtype={'id': str})`.
+- To read selected columns from large files: `pd.read_excel(path, usecols="A,C,E")`.
+  For Excel column LETTERS use the comma-separated STRING form (ranges like
+  `"A:E"` work too). A LIST such as `['A', 'C', 'E']` means column NAMES and
+  raises `ValueError: Usecols do not match columns` unless the headers really are
+  A/C/E (measured, pandas 3.0.6).
+- Parse dates on read: `pd.read_excel(path, parse_dates=['order_date'])`.
 
-**For Excel files themselves**:
-- Add comments to cells with complex formulas or important assumptions
-- Document data sources for hardcoded values
-- Include notes for key calculations and model sections
+## Code style
+
+**Python you generate for workbook tasks (important):**
+
+- Keep the code minimal and concise, with no unnecessary comments.
+- No verbose variable names and no redundant operations.
+- No unnecessary print statements.
+
+**Inside the workbook itself:**
+
+- Add cell comments on complex formulas and important assumptions.
+- Document the source of every hardcoded value.
+- Leave notes for key calculations and model sections.

@@ -1,194 +1,90 @@
 ---
 name: gws
-description: Google Workspace CLI - Gmail, Calendar, Drive, Sheets, Docs, Chat, Tasks, Meet, and more
+description: "Google Workspace from the command line with the gws CLI: Gmail, Calendar, Drive, Sheets, Docs, Chat, Tasks and more. Use when the user asks about Gmail, Google Calendar, Drive files, Google Sheets or Docs, or a Google account's mail, meetings or tasks."
 enabled: true
+tags: google, gmail, calendar, drive, sheets, docs, workspace
 requires: [gws]
 ---
 
 # gws (Google Workspace CLI)
 
-One CLI for all of Google Workspace. Built for humans and AI agents.
-Dynamically built from Google Discovery Service — when Google adds an API endpoint, gws picks it up automatically.
+https://github.com/googleworkspace/cli (npm `@googleworkspace/cli`, Homebrew `googleworkspace-cli`; not an official Google product). Commands mirror the Google REST APIs, plus `+helper` shortcuts. Output is JSON by default.
 
-## Setup
-
-```bash
-# Install
-npm install -g @googleworkspace/cli
-# or: brew install googleworkspace-cli
-
-# Auth (one-time)
-gws auth setup        # creates GCP project, enables APIs, logs you in
-gws auth login        # subsequent logins (scope selection)
-gws auth login -s drive,gmail,sheets,calendar,docs  # selective scopes
-```
-
-## CLI Syntax
+## Setup (user runs these in their own terminal; sign-in opens a browser)
 
 ```bash
-gws <service> <resource> <method> [flags]
-gws <service> +<helper> [flags]           # helper commands (prefixed with +)
+npm install -g @googleworkspace/cli     # or: brew install googleworkspace-cli
+gws auth setup --login                  # needs gcloud; creates the OAuth client, then signs in
+gws auth login -s gmail,calendar,drive  # later sign-ins, limited to some services
+gws auth status                         # the agent can run this to check
 ```
 
-### Global Flags
+Exit code 2 means not signed in: ask the user to run `gws auth login`, do not try to sign in for them.
 
-| Flag | Description |
-|------|-------------|
-| `--format <FORMAT>` | Output: `json` (default), `table`, `yaml`, `csv` |
-| `--dry-run` | Preview request without executing |
-| `--page-all` | Auto-paginate (NDJSON output) |
-| `--page-limit <N>` | Max pages (default: 10) |
+## Rules
+
+- Before sending, replying, forwarding, deleting or creating anything visible to others, show the draft and get confirmation. `--dry-run` shows the request without sending; `--draft` saves Gmail mail as a draft.
+- Quote JSON in single quotes; Sheets ranges with `!` too: `'Sheet1!A1:D10'`.
+- `--output` and `-a/--attach` refuse paths outside the current directory: set the `exec` `workdir` to the file's folder and pass a relative path.
+- `--page-all` streams one JSON line per page (max `--page-limit`, default 10). `--format table|csv|yaml` for readable output.
+- Unsure of a method or field: `gws <service> --help`, `gws schema <service.resource.method>`.
 
 ## Gmail
 
 ```bash
-# Send email
-gws gmail +send --to alice@example.com --subject "Hello" --body "Hi there"
-gws gmail +send --to a@b.com --subject "Report" --body "See attached" --attach ./report.pdf
-
-# Reply / Reply-all / Forward
-gws gmail +reply --message-id MSG_ID --body "Thanks!"
-gws gmail +reply-all --message-id MSG_ID --body "Noted"
-gws gmail +forward --message-id MSG_ID --to bob@example.com
-
-# Read a message
-gws gmail +read --message-id MSG_ID
-
-# Triage inbox
-gws gmail +triage
-
-# Watch for new emails (streaming)
-gws gmail +watch
-
-# Search (API method)
-gws gmail users messages list --params '{"q": "newer_than:7d", "maxResults": 10}'
+gws gmail +triage --max 20                             # unread summary; --query 'from:bob newer_than:7d'
+gws gmail users messages list --params '{"userId": "me", "q": "newer_than:7d", "maxResults": 10}'
+gws gmail +read --id MSG_ID --headers
+gws gmail +send --to a@example.com --subject 'Hi' --body 'Text' [-a file.pdf] [--cc ...] [--html] [--draft]
+gws gmail +reply --message-id MSG_ID --body 'Thanks'   # +reply-all same flags
+gws gmail +forward --message-id MSG_ID --to b@example.com --body 'FYI'
 ```
 
 ## Calendar
 
 ```bash
-# Today's agenda
-gws calendar +agenda --today
-
-# This week
-gws calendar +agenda --week
-
-# Next N days
-gws calendar +agenda --days 3
-
-# Create event
-gws calendar +insert --summary "Team Sync" --start "2026-03-25T10:00:00" --end "2026-03-25T11:00:00"
-
-# List events (API method)
-gws calendar events list --params '{"calendarId": "primary", "timeMin": "2026-03-22T00:00:00Z", "maxResults": 10}'
+gws calendar +agenda --today          # --tomorrow, --week, --days 3, --timezone Europe/Berlin
+gws calendar +insert --summary 'Sync' --start 2026-10-20T10:00:00-07:00 --end 2026-10-20T10:30:00-07:00 \
+  --attendee a@example.com --meet
+gws calendar events list --params '{"calendarId": "primary", "timeMin": "2026-10-15T00:00:00Z", "singleEvents": true, "orderBy": "startTime", "maxResults": 10}'
 ```
+
+Give times with an explicit offset or `Z`.
 
 ## Drive
 
 ```bash
-# List recent files
-gws drive files list --params '{"pageSize": 10}'
-
-# Search files
-gws drive files list --params '{"q": "name contains '\''report'\''", "pageSize": 10}'
-
-# Upload a file
-gws drive +upload ./report.pdf --name "Q1 Report"
-
-# Download a file
-gws drive files get --params '{"fileId": "FILE_ID", "alt": "media"}' -o ./downloaded.pdf
+gws drive files list --params '{"q": "name contains '\''report'\'' and trashed = false", "pageSize": 10, "fields": "files(id,name,mimeType,modifiedTime)"}'
+gws drive +upload ./report.pdf --name 'Q3 Report' [--parent FOLDER_ID]
+gws drive files get --params '{"fileId": "FILE_ID", "alt": "media"}' --output ./file.pdf
+gws drive files export --params '{"fileId": "DOC_ID", "mimeType": "text/plain"}' --output ./doc.txt   # Google Docs/Sheets
 ```
 
-## Sheets
+## Sheets and Docs
 
 ```bash
-# Read cells
-gws sheets +read --spreadsheet SPREADSHEET_ID --range 'Sheet1!A1:D10'
-
-# Read entire sheet
-gws sheets +read --spreadsheet SPREADSHEET_ID --range Sheet1
-
-# Append rows
-gws sheets +append --spreadsheet SPREADSHEET_ID --values 'Alice,100,true'
-gws sheets +append --spreadsheet SPREADSHEET_ID --json-values '[["Name","Score"],["Bob",95]]'
-
-# Update cells (API method)
-gws sheets spreadsheets values update \
-  --params '{"spreadsheetId": "ID", "range": "Sheet1!A1:B2", "valueInputOption": "USER_ENTERED"}' \
+gws sheets +read --spreadsheet SHEET_ID --range 'Sheet1!A1:D10'
+gws sheets +append --spreadsheet SHEET_ID --json-values '[["Bob", 95]]'
+gws sheets spreadsheets values update --params '{"spreadsheetId": "ID", "range": "Sheet1!A1:B2", "valueInputOption": "USER_ENTERED"}' \
   --json '{"values": [["A","B"],["1","2"]]}'
-
-# Create spreadsheet
-gws sheets spreadsheets create --json '{"properties": {"title": "New Sheet"}}'
-```
-
-## Docs
-
-```bash
-# Read document
+gws sheets spreadsheets create --json '{"properties": {"title": "New sheet"}}'
 gws docs documents get --params '{"documentId": "DOC_ID"}'
-
-# Append text
-gws docs +write --document DOC_ID --text 'Hello, world!'
-
-# Create document
-gws docs documents create --json '{"title": "New Doc"}'
+gws docs +write --document DOC_ID --text 'Appended paragraph'
+gws docs documents create --json '{"title": "New doc"}'
 ```
 
-## Chat
+## Chat, Tasks, workflows
 
 ```bash
-# Send message to a space
-gws chat +send --space SPACE_ID --text "Deploy complete."
-
-# List spaces
 gws chat spaces list
-```
-
-## Tasks
-
-```bash
-# List task lists
+gws chat +send --space spaces/AAAA --text 'Deploy complete'
 gws tasks tasklists list
-
-# List tasks
 gws tasks tasks list --params '{"tasklist": "TASKLIST_ID"}'
-```
-
-## Workflows (Helper Commands)
-
-```bash
-# Morning standup summary (today's meetings + open tasks)
-gws workflow +standup-report
-
-# Meeting prep (agenda, attendees, linked docs)
-gws workflow +meeting-prep
-
-# Weekly digest (meetings + unread email count)
+gws workflow +standup-report      # today's meetings + open tasks
+gws workflow +meeting-prep        # next meeting: agenda, attendees, linked docs
 gws workflow +weekly-digest
-
-# Convert email to task
 gws workflow +email-to-task --message-id MSG_ID
-
-# Announce a Drive file in Chat
-gws workflow +file-announce --file FILE_ID --space SPACE_ID
+gws workflow +file-announce --file-id FILE_ID --space spaces/AAAA
 ```
 
-## Discovery / Introspection
-
-```bash
-# Browse any service
-gws sheets --help
-gws gmail --help
-
-# Inspect method schema
-gws schema sheets.spreadsheets.values.get
-gws schema drive.files.list
-```
-
-## Notes
-
-- All output is structured JSON by default
-- Use `--dry-run` before destructive operations
-- Sheets ranges with `!` must be single-quoted in bash: `'Sheet1!A1:D10'`
-- `gws auth login -s drive,gmail,sheets` for selective scope login
-- 100+ agent skills available: see `skills/` in the gws repo
+Also available: `slides`, `forms`, `keep`, `meet`, `people`, `classroom`, `script` (see `gws --help`).
