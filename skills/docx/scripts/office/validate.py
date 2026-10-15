@@ -1,111 +1,99 @@
-"""
-Command line tool to validate Office document XML files against XSD schemas and tracked changes.
+"""Validate an unpacked directory or a packed Office file.
+
+Two layers, both dependency-light:
+
+  1. XML well-formedness of every part (via lxml). This catches the mistakes that
+     hand-editing introduces - unbalanced tags, stray entities, bad namespaces.
+  2. Structural validation, delegated to `officecli validate` when that binary is
+     on PATH. officecli checks the file against the OpenXML schema without needing
+     Word or LibreOffice; when it is absent, layer 1 still runs and the command
+     reports that the structural check was skipped.
+
+Exit status is 0 only when every layer that ran passed. A schema failure from
+officecli fails the command (exit 1), so a broken repack cannot slip through green.
 
 Usage:
-    python validate.py <path> [--original <original_file>] [--auto-repair] [--author NAME]
-
-The first argument can be either:
-- An unpacked directory containing the Office document XML files
-- A packed Office file (.docx/.pptx/.xlsx) which will be unpacked to a temp directory
-
-Auto-repair fixes:
-- paraId/durableId values that exceed OOXML limits
-- Missing xml:space="preserve" on w:t elements with whitespace
+    python office/validate.py <path> [-v]
 """
-
 import argparse
+import shutil
+import subprocess
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
 
-from validators import DOCXSchemaValidator, PPTXSchemaValidator, RedliningValidator
+from lxml import etree
+
+OOXML_SUFFIXES = {".docx", ".pptx", ".xlsx"}
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Validate Office document XML files")
-    parser.add_argument(
-        "path",
-        help="Path to unpacked directory or packed Office file (.docx/.pptx/.xlsx)",
-    )
-    parser.add_argument(
-        "--original",
-        required=False,
-        default=None,
-        help="Path to original file (.docx/.pptx/.xlsx). If omitted, all XSD errors are reported and redlining validation is skipped.",
-    )
-    parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        help="Enable verbose output",
-    )
-    parser.add_argument(
-        "--auto-repair",
-        action="store_true",
-        help="Automatically repair common issues (hex IDs, whitespace preservation)",
-    )
-    parser.add_argument(
-        "--author",
-        default="Claude",
-        help="Author name for redlining validation (default: Claude)",
-    )
-    args = parser.parse_args()
+def _wellformed(directory: Path, verbose: bool) -> list[str]:
+    errors = []
+    for part in list(directory.rglob("*.xml")) + list(directory.rglob("*.rels")):
+        try:
+            etree.parse(str(part))
+            if verbose:
+                print(f"ok    {part.relative_to(directory)}")
+        except etree.XMLSyntaxError as exc:
+            errors.append(f"{part.relative_to(directory)}: {exc}")
+    return errors
 
-    path = Path(args.path)
-    assert path.exists(), f"Error: {path} does not exist"
 
-    original_file = None
-    if args.original:
-        original_file = Path(args.original)
-        assert original_file.is_file(), f"Error: {original_file} is not a file"
-        assert original_file.suffix.lower() in [".docx", ".pptx", ".xlsx"], (
-            f"Error: {original_file} must be a .docx, .pptx, or .xlsx file"
-        )
+def _officecli_validate(packed: Path) -> tuple[bool | None, str]:
+    if shutil.which("officecli") is None:
+        return None, "skipped (officecli not on PATH)"
+    proc = subprocess.run(["officecli", "validate", str(packed)],
+                          capture_output=True, text=True, timeout=120, check=False)
+    detail = (proc.stdout + proc.stderr).strip()
+    return (proc.returncode == 0), (detail or ("passed" if proc.returncode == 0 else "failed"))
 
-    file_extension = (original_file or path).suffix.lower()
-    assert file_extension in [".docx", ".pptx", ".xlsx"], (
-        f"Error: Cannot determine file type from {path}. Use --original or provide a .docx/.pptx/.xlsx file."
-    )
 
-    if path.is_file() and path.suffix.lower() in [".docx", ".pptx", ".xlsx"]:
-        temp_dir = tempfile.mkdtemp()
-        with zipfile.ZipFile(path, "r") as zf:
-            zf.extractall(temp_dir)
-        unpacked_dir = Path(temp_dir)
+def validate(path: str, verbose: bool = False) -> tuple[bool, str]:
+    target = Path(path)
+    if not target.exists():
+        return False, f"Error: {path} does not exist"
+
+    packed_for_officecli: Path | None = None
+    tmp: tempfile.TemporaryDirectory | None = None
+
+    if target.is_dir():
+        directory = target
+    elif target.suffix.lower() in OOXML_SUFFIXES:
+        packed_for_officecli = target
+        tmp = tempfile.TemporaryDirectory()
+        directory = Path(tmp.name)
+        with zipfile.ZipFile(target) as zf:
+            zf.extractall(directory)
     else:
-        assert path.is_dir(), f"Error: {path} is not a directory or Office file"
-        unpacked_dir = path
+        return False, f"Error: {path} must be a directory or a .docx/.pptx/.xlsx file"
 
-    match file_extension:
-        case ".docx":
-            validators = [
-                DOCXSchemaValidator(unpacked_dir, original_file, verbose=args.verbose),
-            ]
-            if original_file:
-                validators.append(
-                    RedliningValidator(unpacked_dir, original_file, verbose=args.verbose, author=args.author)  
-                )
-        case ".pptx":
-            validators = [
-                PPTXSchemaValidator(unpacked_dir, original_file, verbose=args.verbose),
-            ]
-        case _:
-            print(f"Error: Validation not supported for file type {file_extension}")
-            sys.exit(1)
+    lines = []
+    errors = _wellformed(directory, verbose)
+    if errors:
+        lines.append("XML NOT well-formed:")
+        lines.extend(f"  - {e}" for e in errors)
+    else:
+        lines.append("XML well-formed: all parts parse")
 
-    if args.auto_repair:
-        total_repairs = sum(v.repair() for v in validators)
-        if total_repairs:
-            print(f"Auto-repaired {total_repairs} issue(s)")
+    schema_ok: bool | None = None
+    if packed_for_officecli is not None:
+        schema_ok, detail = _officecli_validate(packed_for_officecli)
+        lines.append(f"officecli validate: {detail}")
+    else:
+        lines.append("officecli validate: skipped (pack first to run the schema check)")
 
-    success = all(v.validate() for v in validators)
-
-    if success:
-        print("All validations PASSED!")
-
-    sys.exit(0 if success else 1)
+    if tmp is not None:
+        tmp.cleanup()
+    ok = (not errors) and (schema_ok is not False)
+    return ok, "\n".join(lines)
 
 
 if __name__ == "__main__":
-    main()
+    ap = argparse.ArgumentParser(description="Validate an Office document")
+    ap.add_argument("path", help="unpacked directory or packed .docx/.pptx/.xlsx")
+    ap.add_argument("-v", "--verbose", action="store_true")
+    args = ap.parse_args()
+    ok, report = validate(args.path, verbose=args.verbose)
+    print(report)
+    sys.exit(0 if ok else 1)

@@ -1,122 +1,207 @@
+#!/usr/bin/env python3
+"""Extract structured information about a PDF's fillable AcroForm fields.
+
+Usage:
+    python extract_form_field_info.py <input.pdf> [field_info.json]
+
+Prints (and optionally writes) a JSON list. Each element describes one field:
+
+    {"field_id": <fully-qualified name>,
+     "page": <1-based page number>,
+     "rect": [left, bottom, right, top],   # PDF points, y=0 at page bottom
+     "type": "text" | "checkbox" | "radio_group" | "choice"}
+
+Type-specific keys:
+    checkbox     -> "checked_value", "unchecked_value"
+    radio_group  -> "radio_options": [{"value", "rect"}, ...]
+    choice       -> "choice_options": [{"value", "text"}, ...]
+
+Built on pypdf: the AcroForm is discovered by walking each page's /Annots
+widget annotations up to their terminal field object (the nearest node carrying
+a /T name), grouping widgets that share one field (e.g. radio buttons).
+"""
 import json
 import sys
 
 from pypdf import PdfReader
 
+# PDF button field flags (/Ff), 1-based bit positions from the PDF spec.
+_FLAG_RADIO = 1 << 15       # bit 16
+_FLAG_PUSHBUTTON = 1 << 16  # bit 17
 
 
-
-def get_full_annotation_field_id(annotation):
-    components = []
-    while annotation:
-        field_name = annotation.get('/T')
-        if field_name:
-            components.append(field_name)
-        annotation = annotation.get('/Parent')
-    return ".".join(reversed(components)) if components else None
+def _obj(x):
+    """Resolve an indirect object to its concrete value."""
+    if x is not None and hasattr(x, "get_object"):
+        return x.get_object()
+    return x
 
 
-def make_field_dict(field, field_id):
-    field_dict = {"field_id": field_id}
-    ft = field.get('/FT')
-    if ft == "/Tx":
-        field_dict["type"] = "text"
-    elif ft == "/Btn":
-        field_dict["type"] = "checkbox"  
-        states = field.get("/_States_", [])
-        if len(states) == 2:
-            if "/Off" in states:
-                field_dict["checked_value"] = states[0] if states[0] != "/Off" else states[1]
-                field_dict["unchecked_value"] = "/Off"
-            else:
-                print(f"Unexpected state values for checkbox `${field_id}`. Its checked and unchecked values may not be correct; if you're trying to check it, visually verify the results.")
-                field_dict["checked_value"] = states[0]
-                field_dict["unchecked_value"] = states[1]
-    elif ft == "/Ch":
-        field_dict["type"] = "choice"
-        states = field.get("/_States_", [])
-        field_dict["choice_options"] = [{
-            "value": state[0],
-            "text": state[1],
-        } for state in states]
-    else:
-        field_dict["type"] = f"unknown ({ft})"
-    return field_dict
+def _terminal_field(widget):
+    """Nearest node (widget or ancestor) that carries a /T field name."""
+    cur = _obj(widget)
+    seen = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if "/T" in cur:
+            return cur
+        cur = _obj(cur.get("/Parent"))
+    return None
 
 
-def get_field_info(reader: PdfReader):
-    fields = reader.get_fields()
+def _inherited(field, key):
+    """Look up an attribute on the field or any ancestor (PDF inheritance)."""
+    cur = _obj(field)
+    seen = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if key in cur:
+            return cur[key]
+        cur = _obj(cur.get("/Parent"))
+    return None
 
-    field_info_by_id = {}
-    possible_radio_names = set()
 
-    for field_id, field in fields.items():
-        if field.get("/Kids"):
-            if field.get("/FT") == "/Btn":
-                possible_radio_names.add(field_id)
+def _full_name(field):
+    """Build the fully-qualified field name by joining /T up the parent chain."""
+    parts = []
+    cur = _obj(field)
+    seen = set()
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        t = cur.get("/T")
+        if t is not None:
+            parts.insert(0, str(t))
+        cur = _obj(cur.get("/Parent"))
+    return ".".join(parts)
+
+
+def _rect(widget):
+    """Return the widget's /Rect as [left, bottom, right, top] floats."""
+    rect = _obj(_obj(widget).get("/Rect"))
+    if not rect:
+        return None
+    return [float(_obj(v)) for v in rect]
+
+
+def _on_state(widget):
+    """Return the appearance-state name that turns a button widget 'on'."""
+    ap = _obj(_obj(widget).get("/AP"))
+    if not ap:
+        return None
+    normal = _obj(ap.get("/N"))
+    if not normal or not hasattr(normal, "keys"):
+        return None
+    for key in normal.keys():
+        if str(key) != "/Off":
+            return str(key)
+    return None
+
+
+def _choice_options(field):
+    """Return the /Opt list of a choice field as [{'value', 'text'}, ...]."""
+    opt = _obj(_inherited(field, "/Opt"))
+    options = []
+    if not opt:
+        return options
+    for entry in opt:
+        entry = _obj(entry)
+        if isinstance(entry, str):
+            options.append({"value": str(entry), "text": str(entry)})
+        elif hasattr(entry, "__getitem__") and len(entry) >= 2:
+            export = str(_obj(entry[0]))
+            display = str(_obj(entry[1]))
+            options.append({"value": export, "text": display})
+        else:
+            options.append({"value": str(entry), "text": str(entry)})
+    return options
+
+
+def get_field_info(reader):
+    """Return a list of field-info dicts for every fillable field in ``reader``.
+
+    Imported by fill_fillable_fields.py to validate requested values.
+    """
+    groups = {}
+    order = []
+    for page_num, page in enumerate(reader.pages, start=1):
+        annots = _obj(page.get("/Annots"))
+        if not annots:
             continue
-        field_info_by_id[field_id] = make_field_dict(field, field_id)
+        for annot in annots:
+            widget = _obj(annot)
+            if widget is None or widget.get("/Subtype") != "/Widget":
+                continue
+            field = _terminal_field(widget)
+            if field is None:
+                continue
+            ft = _inherited(field, "/FT")
+            if ft is None:
+                continue
+            key = id(field)
+            if key not in groups:
+                groups[key] = {
+                    "field": field,
+                    "ft": str(ft),
+                    "page": page_num,
+                    "widgets": [],
+                }
+                order.append(key)
+            groups[key]["widgets"].append(widget)
 
+    results = []
+    for key in order:
+        group = groups[key]
+        ft = group["ft"]
+        widgets = group["widgets"]
+        info = {"field_id": _full_name(group["field"]), "page": group["page"]}
 
-    radio_fields_by_id = {}
-
-    for page_index, page in enumerate(reader.pages):
-        annotations = page.get('/Annots', [])
-        for ann in annotations:
-            field_id = get_full_annotation_field_id(ann)
-            if field_id in field_info_by_id:
-                field_info_by_id[field_id]["page"] = page_index + 1
-                field_info_by_id[field_id]["rect"] = ann.get('/Rect')
-            elif field_id in possible_radio_names:
-                try:
-                    on_values = [v for v in ann["/AP"]["/N"] if v != "/Off"]
-                except KeyError:
-                    continue
-                if len(on_values) == 1:
-                    rect = ann.get("/Rect")
-                    if field_id not in radio_fields_by_id:
-                        radio_fields_by_id[field_id] = {
-                            "field_id": field_id,
-                            "type": "radio_group",
-                            "page": page_index + 1,
-                            "radio_options": [],
-                        }
-                    radio_fields_by_id[field_id]["radio_options"].append({
-                        "value": on_values[0],
-                        "rect": rect,
-                    })
-
-    fields_with_location = []
-    for field_info in field_info_by_id.values():
-        if "page" in field_info:
-            fields_with_location.append(field_info)
+        if ft == "/Tx":
+            info["rect"] = _rect(widgets[0])
+            info["type"] = "text"
+        elif ft == "/Btn":
+            ff = _inherited(group["field"], "/Ff")
+            ff = int(ff) if ff is not None else 0
+            if ff & _FLAG_PUSHBUTTON:
+                continue  # push buttons hold no data; skip them
+            if ff & _FLAG_RADIO:
+                info["type"] = "radio_group"
+                options = []
+                for widget in widgets:
+                    on = _on_state(widget)
+                    if on is not None:
+                        options.append({"value": on, "rect": _rect(widget)})
+                info["radio_options"] = options
+            else:
+                info["rect"] = _rect(widgets[0])
+                info["type"] = "checkbox"
+                info["checked_value"] = _on_state(widgets[0]) or "/Yes"
+                info["unchecked_value"] = "/Off"
+        elif ft == "/Ch":
+            info["rect"] = _rect(widgets[0])
+            info["type"] = "choice"
+            info["choice_options"] = _choice_options(group["field"])
         else:
-            print(f"Unable to determine location for field id: {field_info.get('field_id')}, ignoring")
+            continue  # e.g. /Sig signature fields are not fillable text
 
-    def sort_key(f):
-        if "radio_options" in f:
-            rect = f["radio_options"][0]["rect"] or [0, 0, 0, 0]
-        else:
-            rect = f.get("rect") or [0, 0, 0, 0]
-        adjusted_position = [-rect[1], rect[0]]
-        return [f.get("page"), adjusted_position]
-    
-    sorted_fields = fields_with_location + list(radio_fields_by_id.values())
-    sorted_fields.sort(key=sort_key)
-
-    return sorted_fields
+        results.append(info)
+    return results
 
 
-def write_field_info(pdf_path: str, json_output_path: str):
-    reader = PdfReader(pdf_path)
-    field_info = get_field_info(reader)
-    with open(json_output_path, "w") as f:
-        json.dump(field_info, f, indent=2)
-    print(f"Wrote {len(field_info)} fields to {json_output_path}")
+def main(argv):
+    if len(argv) not in (2, 3):
+        print("Usage: python extract_form_field_info.py <input.pdf> "
+              "[field_info.json]", file=sys.stderr)
+        return 2
+    reader = PdfReader(argv[1])
+    fields = get_field_info(reader)
+    text = json.dumps(fields, indent=2)
+    if len(argv) == 3:
+        with open(argv[2], "w", encoding="utf-8") as handle:
+            handle.write(text)
+        print(f"Wrote {len(fields)} field(s) to {argv[2]}", file=sys.stderr)
+    print(text)
+    return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: extract_form_field_info.py [input pdf] [output json]")
-        sys.exit(1)
-    write_field_info(sys.argv[1], sys.argv[2])
+    sys.exit(main(sys.argv))

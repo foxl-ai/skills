@@ -1,10 +1,10 @@
-# Editing Presentations
+# Editing presentations
 
-## Template-Based Workflow
+## Template-based workflow
 
-When using an existing presentation as a template:
+1. **Analyze the existing slides.** Render a grid and read the outline so you know
+   what each layout offers:
 
-1. **Analyze existing slides**:
    ```bash
    officecli view template.pptx screenshot --grid -o /tmp/template-grid.png
    officecli view template.pptx outline
@@ -15,47 +15,54 @@ When using an existing presentation as a template:
    `slideN.xml` filename and marks hidden slides - use it when you need to map
    a layout back to a specific XML part.)
 
-2. **Plan slide mapping**: For each content section, choose a template slide.
+2. **Plan the slide mapping.** For each section of your content, choose a template
+   slide to carry it. Reach for varied layouts - monotony is the most common way a
+   deck fails, so do not fall back to title-plus-bullets for everything. Look for
+   multi-column (two- or three-column) slides, image-plus-text slides, full-bleed
+   images with a text overlay, quote or callout slides, section dividers, stat or
+   number callouts, and icon grids or icon-and-text rows. Match the content type to
+   the layout: key points map to bullets, team information to multi-column,
+   testimonials to a quote slide.
 
-   ⚠️ **USE VARIED LAYOUTS** — monotonous presentations are a common failure mode. Don't default to basic title + bullet slides. Actively seek out:
-   - Multi-column layouts (2-column, 3-column)
-   - Image + text combinations
-   - Full-bleed images with text overlay
-   - Quote or callout slides
-   - Section dividers
-   - Stat/number callouts
-   - Icon grids or icon + text rows
+3. **Unpack the template.**
 
-   **Avoid:** Repeating the same text-heavy layout for every slide.
+   ```bash
+   python scripts/office/unpack.py template.pptx unpacked/
+   ```
 
-   Match content type to layout style (e.g., key points → bullet slide, team info → multi-column, testimonials → quote slide).
+4. **Build the presentation structure yourself** (do not delegate this to
+   subagents). Delete the slides you do not want by removing their `<p:sldId>` from
+   `<p:sldIdLst>`; duplicate the slides you want to reuse with `add_slide.py`;
+   reorder slides by rearranging the `<p:sldId>` elements. Finish every structural
+   change before you move on to editing content.
 
-3. **Unpack**: `python scripts/office/unpack.py template.pptx unpacked/`
+5. **Edit the content.** Update the text in each `slide{N}.xml`. Because every slide
+   is its own XML file, subagents can work on different slides in parallel at this
+   stage.
 
-4. **Build presentation** (do this yourself, not with subagents):
-   - Delete unwanted slides (remove from `<p:sldIdLst>`)
-   - Duplicate slides you want to reuse (`add_slide.py`)
-   - Reorder slides in `<p:sldIdLst>`
-   - **Complete all structural changes before step 5**
+6. **Clean up.**
 
-5. **Edit content**: Update text in each `slide{N}.xml`.
-   **Use subagents here if available** — slides are separate XML files, so subagents can edit in parallel.
+   ```bash
+   python scripts/clean.py unpacked/
+   ```
 
-6. **Clean**: `python scripts/clean.py unpacked/`
+7. **Pack the result.**
 
-7. **Pack**: `python scripts/office/pack.py unpacked/ output.pptx --original template.pptx`
-
----
+   ```bash
+   python scripts/office/pack.py unpacked/ output.pptx
+   ```
+   `pack.py` takes only the input directory and the output file - there is no
+   `--original` flag.
 
 ## Scripts
 
 | Script | Purpose |
-|--------|---------|
-| `unpack.py` | Extract and pretty-print PPTX |
-| `add_slide.py` | Duplicate slide or create from layout |
-| `clean.py` | Remove orphaned files |
-| `pack.py` | Repack with validation |
-| `thumbnail.py` | Create visual grid of slides |
+| --- | --- |
+| `unpack.py` | Extract the PPTX and pretty-print its XML parts so they are readable and diffable. |
+| `add_slide.py` | Duplicate a slide, or create a new slide from a layout. |
+| `clean.py` | Remove orphaned parts that nothing references anymore. |
+| `pack.py` | Repack the directory into a `.pptx`, applying safe repairs. |
+| `thumbnail.py` | Build a labeled thumbnail grid of the deck. |
 
 ### unpack.py
 
@@ -63,16 +70,39 @@ When using an existing presentation as a template:
 python scripts/office/unpack.py input.pptx unpacked/
 ```
 
-Extracts PPTX, pretty-prints XML, escapes smart quotes.
+Extracts the archive and pretty-prints every `.xml` and `.rels` part so the markup
+is easy to read and diff. Leaf text - the content of nodes like `<a:t>`, and
+anything carrying `xml:space="preserve"` - is left exactly as it was, so words
+round-trip unchanged. The `--no-merge-runs` and `--no-simplify-redlines` flags apply
+to DOCX only and are no-ops for a PPTX. Unpacking does not "escape" smart quotes as a
+separate step; curly quotes pass through untouched (the real rule is in Smart quotes,
+below).
 
 ### add_slide.py
 
+Duplicate a slide:
+
 ```bash
-python scripts/add_slide.py unpacked/ slide2.xml      # Duplicate slide
-python scripts/add_slide.py unpacked/ slideLayout2.xml # From layout
+python scripts/add_slide.py unpacked/ slide2.xml
 ```
 
-Prints `<p:sldId>` to add to `<p:sldIdLst>` at desired position.
+Create a slide from a layout:
+
+```bash
+python scripts/add_slide.py unpacked/ slideLayout2.xml
+```
+
+It writes `ppt/slides/slide{next}.xml`, where `next` is one greater than the highest
+slide number already present. It also writes that slide's `_rels` (a clone of the
+source slide's rels when you duplicate a slide, or a single slideLayout relationship
+when you start from a layout), adds the matching `<Override>` to
+`[Content_Types].xml`, and registers a slide relationship in
+`ppt/_rels/presentation.xml.rels` under a fresh `rId`.
+
+What it does NOT do is edit `<p:sldIdLst>`. Instead it prints a
+`<p:sldId id="..." r:id="..."/>` element for you to paste into `<p:sldIdLst>`. Where
+you insert it decides the slide's position in the deck, which is deliberately left as
+a human step.
 
 ### clean.py
 
@@ -80,15 +110,28 @@ Prints `<p:sldId>` to add to `<p:sldIdLst>` at desired position.
 python scripts/clean.py unpacked/
 ```
 
-Removes slides not in `<p:sldIdLst>`, unreferenced media, orphaned rels.
+Walks the OPC relationship graph outward from the package root and
+`ppt/presentation.xml`, then deletes every part the graph never reaches: slides no
+longer listed in `<p:sldIdLst>`, plus the notes slides, media, embeddings, charts,
+diagrams, drawings, and ink that only those orphaned slides referenced, along with any
+unused theme parts and a stray `[trash]` directory. It keeps the package consistent as
+it goes - removing each deleted part's `_rels`, pruning the relationships that pointed
+at it, and dropping its `<Override>` from `[Content_Types].xml`. It is conservative: a
+part is deleted only when nothing reachable references it, and a slide counts as
+referenced for as long as `<p:sldIdLst>` still lists the `r:id` that targets it.
 
 ### pack.py
 
 ```bash
-python scripts/office/pack.py unpacked/ output.pptx --original input.pptx
+python scripts/office/pack.py unpacked/ output.pptx   # optional --no-repair
 ```
 
-Validates, repairs, condenses XML, re-encodes smart quotes.
+Zips the directory back into a deflated OPC container. Unless you pass `--no-repair`,
+it applies two Word-safe repairs (which matter mainly for DOCX): it clamps the
+w14/w15/w16 hex ids - `paraId`, `textId`, `durableId` - to `0x7FFFFFFF` and
+regenerates any that overflow, and it sets `xml:space="preserve"` on any `<w:t>` that
+has leading or trailing whitespace. There is no `--original` flag and no `--validate`
+flag; to validate, run `office/validate.py` or `officecli validate` separately.
 
 ### thumbnail.py
 
@@ -102,112 +145,125 @@ placeholder for hidden slides). Default 3 columns, max 12 per grid. Renders via
 
 **Use for template analysis only** (choosing layouts, mapping a layout to its
 `slideN.xml`). For visual QA, render full-resolution slides with
-`officecli view deck.pptx screenshot --start N --end N -o /tmp/slide-N.png`—see SKILL.md.
+`officecli view deck.pptx screenshot --start N --end N -o /tmp/slide-N.png` - see SKILL.md.
 
----
+`--cols` defaults to 3 and is capped at 6. Each sheet holds up to 12 tiles (that is
+what "max 12 per grid" counts - tiles, not columns); a larger deck is split across
+`<prefix>-1.jpg`, `<prefix>-2.jpg`, and so on. The default prefix is `thumbnails`,
+giving `thumbnails.jpg`. Each tile is about 300px wide. Hidden slides (`show="0"`) get
+a crosshatched placeholder tile instead of a render. The script fails loudly rather
+than emitting a blank sheet if officecli cannot rasterize, and it requires `officecli`
+on PATH.
 
-## Slide Operations
+## Slide operations
 
-Slide order is in `ppt/presentation.xml` → `<p:sldIdLst>`.
+Slide order lives in `ppt/presentation.xml`, inside `<p:sldIdLst>`.
 
-**Reorder**: Rearrange `<p:sldId>` elements.
+- **Reorder:** rearrange the `<p:sldId>` elements within `<p:sldIdLst>`.
+- **Delete:** remove the slide's `<p:sldId>`, then run `clean.py` to sweep up the
+  parts it referenced.
+- **Add:** use `add_slide.py`. Never hand-copy slide files - the script handles the
+  notes references, the `[Content_Types].xml` entry, and the relationship IDs that
+  manual copying tends to miss.
 
-**Delete**: Remove `<p:sldId>`, then run `clean.py`.
+## Editing content
 
-**Add**: Use `add_slide.py`. Never manually copy slide files—the script handles notes references, Content_Types.xml, and relationship IDs that manual copying misses.
+Once the structure is settled (step 4 above is done), subagents can help here if they
+are available: each slide is a separate XML file, so they can edit in parallel. When
+you hand a slide to a subagent, tell it the slide file path(s), that it must use the
+Edit tool for every change, and the formatting rules and pitfalls below.
 
----
+For each slide: read the slide XML, identify every piece of placeholder content (text,
+images, charts, icons, captions), and replace each placeholder with the final content.
 
-## Editing Content
+Make changes with the Edit tool rather than `sed` or a Python script - it forces you
+to be specific about what you are changing and where, which is far more reliable.
 
-**Subagents:** If available, use them here (after completing step 4). Each slide is a separate XML file, so subagents can edit in parallel. In your prompt to subagents, include:
-- The slide file path(s) to edit
-- **"Use the Edit tool for all changes"**
-- The formatting rules and common pitfalls below
+Formatting rules:
+- Bold every header, subheading, and inline label by setting `b="1"` on the
+  `<a:rPr>`. That covers slide titles, in-slide section headers, and inline labels at
+  the start of a line (for example "Status:" or "Description:").
+- Never use a unicode bullet character. Use real list formatting - `<a:buChar>` or
+  `<a:buAutoNum>`.
+- For bullet consistency, let bullets inherit from the layout; only specify
+  `<a:buChar>` or `<a:buNone>` when you need to override.
 
-For each slide:
-1. Read the slide's XML
-2. Identify ALL placeholder content—text, images, charts, icons, captions
-3. Replace each placeholder with final content
+## Common pitfalls
 
-**Use the Edit tool, not sed or Python scripts.** The Edit tool forces specificity about what to replace and where, yielding better reliability.
+### Template adaptation
 
-### Formatting Rules
+- When the source has fewer items than the template provides, remove the excess
+  elements outright - images, shapes, text boxes - rather than just clearing their
+  text. After you clear text, check for visuals that were left orphaned, and run
+  visual QA to catch a mismatched count.
+- When you replace text with text of a different length, shorter is usually safe, but
+  longer text may overflow or wrap in ways you did not expect. Test it with visual QA,
+  and consider truncating or splitting the content to fit the template's constraints.
+- Template slots rarely match the number of source items. If the template lays out
+  four team members but you only have three, delete the fourth member's ENTIRE group -
+  the image and every text box - not just its text.
 
-- **Bold all headers, subheadings, and inline labels**: Use `b="1"` on `<a:rPr>`. This includes:
-  - Slide titles
-  - Section headers within a slide
-  - Inline labels like (e.g.: "Status:", "Description:") at the start of a line
-- **Never use unicode bullets (•)**: Use proper list formatting with `<a:buChar>` or `<a:buAutoNum>`
-- **Bullet consistency**: Let bullets inherit from the layout. Only specify `<a:buChar>` or `<a:buNone>`.
+### Multi-item content
 
----
+When the source has several items (a numbered list, or multiple sections), create one
+`<a:p>` per item. Never concatenate them into a single string. Copy the `<a:pPr>` from
+the original paragraph so the line spacing is preserved, and set `b="1"` on headers.
 
-## Common Pitfalls
+WRONG - several steps crammed into one paragraph and one run:
 
-### Template Adaptation
-
-When source content has fewer items than the template:
-- **Remove excess elements entirely** (images, shapes, text boxes), don't just clear text
-- Check for orphaned visuals after clearing text content
-- Run visual QA to catch mismatched counts
-
-When replacing text with different length content:
-- **Shorter replacements**: Usually safe
-- **Longer replacements**: May overflow or wrap unexpectedly
-- Test with visual QA after text changes
-- Consider truncating or splitting content to fit the template's design constraints
-
-**Template slots ≠ Source items**: If template has 4 team members but source has 3 users, delete the 4th member's entire group (image + text boxes), not just the text.
-
-### Multi-Item Content
-
-If source has multiple items (numbered lists, multiple sections), create separate `<a:p>` elements for each — **never concatenate into one string**.
-
-**❌ WRONG** — all items in one paragraph:
 ```xml
 <a:p>
-  <a:r><a:rPr .../><a:t>Step 1: Do the first thing. Step 2: Do the second thing.</a:t></a:r>
+  <a:r>
+    <a:rPr lang="en-US"/>
+    <a:t>Draft the outline. Collect the assets. Assemble the deck.</a:t>
+  </a:r>
 </a:p>
 ```
 
-**✅ CORRECT** — separate paragraphs with bold headers:
-```xml
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" b="1" .../><a:t>Step 1</a:t></a:r>
-</a:p>
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" .../><a:t>Do the first thing.</a:t></a:r>
-</a:p>
-<a:p>
-  <a:pPr algn="l"><a:lnSpc><a:spcPts val="3919"/></a:lnSpc></a:pPr>
-  <a:r><a:rPr lang="en-US" sz="2799" b="1" .../><a:t>Step 2</a:t></a:r>
-</a:p>
-<!-- continue pattern -->
-```
-
-Copy `<a:pPr>` from the original paragraph to preserve line spacing. Use `b="1"` on headers.
-
-### Smart Quotes
-
-Handled automatically by unpack/pack. But the Edit tool converts smart quotes to ASCII.
-
-**When adding new text with quotes, use XML entities:**
+CORRECT - one paragraph per item, line spacing carried over from the source, header
+paragraphs bold and body paragraphs not:
 
 ```xml
-<a:t>the &#x201C;Agreement&#x201D;</a:t>
+<a:p>
+  <a:pPr>
+    <a:lnSpc><a:spcPts val="2000"/></a:lnSpc>
+  </a:pPr>
+  <a:r>
+    <a:rPr lang="en-US" b="1"/>
+    <a:t>Step 1: Draft the outline</a:t>
+  </a:r>
+</a:p>
+<a:p>
+  <a:pPr>
+    <a:lnSpc><a:spcPts val="2000"/></a:lnSpc>
+  </a:pPr>
+  <a:r>
+    <a:rPr lang="en-US"/>
+    <a:t>Gather every image and data source you will need.</a:t>
+  </a:r>
+</a:p>
 ```
 
-| Character | Name | Unicode | XML Entity |
-|-----------|------|---------|------------|
-| `“` | Left double quote | U+201C | `&#x201C;` |
-| `”` | Right double quote | U+201D | `&#x201D;` |
-| `‘` | Left single quote | U+2018 | `&#x2018;` |
-| `’` | Right single quote | U+2019 | `&#x2019;` |
+### Smart quotes
+
+unpack and pack handle smart quotes automatically, but the Edit tool rewrites curly
+quotes to ASCII. So when you add NEW text that contains quotes, write them as XML
+numeric entities instead:
+
+```xml
+<a:t>The panel called it &#x201C;unmissable&#x201D; in the review.</a:t>
+```
+
+| Character | Name | Unicode | XML entity |
+| --- | --- | --- | --- |
+| “ | left double quote | U+201C | `&#x201C;` |
+| ” | right double quote | U+201D | `&#x201D;` |
+| ‘ | left single quote | U+2018 | `&#x2018;` |
+| ’ | right single quote | U+2019 | `&#x2019;` |
 
 ### Other
 
-- **Whitespace**: Use `xml:space="preserve"` on `<a:t>` with leading/trailing spaces
-- **XML parsing**: Use `defusedxml.minidom`, not `xml.etree.ElementTree` (corrupts namespaces)
+- **Whitespace:** set `xml:space="preserve"` on any `<a:t>` that has leading or
+  trailing spaces, or they will be stripped.
+- **XML parsing:** parse with `defusedxml.minidom`, not `xml.etree.ElementTree` - the
+  latter corrupts namespaces.
