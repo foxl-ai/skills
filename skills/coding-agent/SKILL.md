@@ -1,6 +1,6 @@
 ---
 name: coding-agent
-description: Run Codex CLI, Claude Code, or other coding agents via background process
+description: Run OpenCode, Pi or another terminal coding agent on this computer. For Claude Code or Codex, use the claude-code or codex-cli skill instead, which track sessions and report status.
 enabled: false
 requires: [claude, codex, opencode, pi]
 requiresAny: true
@@ -8,84 +8,51 @@ requiresAny: true
 
 # Coding Agent
 
-Run coding agents (Codex, Claude Code, OpenCode, Pi) for programmatic code generation.
+Run terminal coding agents on this computer for programmatic code generation.
 
-## PTY Mode Required
+**Claude Code and Codex have dedicated skills** that start background sessions,
+report status and relay follow-ups: read the `claude-code` or `codex-cli` skill
+for those. Use this one for other agents.
 
-Coding agents are interactive terminal apps that need a pseudo-terminal:
+## Choosing the tool
 
-```bash
-# Always use pty:true when running coding agents
-bash pty:true command:"codex exec 'Your prompt'"
-```
-
-## Quick Start
-
-```bash
-# Quick chat (Codex needs a git repo)
-SCRATCH=$(mktemp -d) && cd $SCRATCH && git init && codex exec "Your prompt"
-
-# In a real project
-bash pty:true workdir:~/project command:"codex exec 'Add error handling'"
-```
-
-## Codex CLI
-
-```bash
-# One-shot execution
-bash pty:true workdir:~/project command:"codex exec --full-auto 'Build a dark mode toggle'"
-
-# Background for longer work
-bash pty:true workdir:~/project background:true command:"codex --yolo 'Refactor auth module'"
-```
-
-Flags:
-- `exec "prompt"` - One-shot execution
-- `--full-auto` - Sandboxed but auto-approves
-- `--yolo` - No sandbox, no approvals (fastest)
-
-## Claude Code
-
-```bash
-bash pty:true workdir:~/project command:"claude 'Your task'"
-```
+- **One-shot, non-interactive** (`opencode run`, `pi -p`): the `exec` tool.
+  Pass a `timeout` (seconds) that fits the task; the default is 180.
+- **Longer work in the background**: `exec` with `background: true`, then the
+  `process` tool (`action: list | poll | log | kill`) to follow it. A background
+  run is killed when its timeout expires (one hour by default), so for anything
+  longer detach it yourself (`nohup ... > log 2>&1 &`) or use a dedicated skill.
+- **Interactive TUI** that needs a real terminal: the `terminal` tool
+  (`action: spawn`, then `write` / `read`; end `input` with a newline to press
+  Enter).
 
 ## OpenCode
 
 ```bash
-bash pty:true workdir:~/project command:"opencode run 'Your task'"
+opencode run 'Your task'          # in the project folder (exec workdir)
 ```
 
 ## Pi Coding Agent
 
 ```bash
 # Install: npm install -g @mariozechner/pi-coding-agent
-bash pty:true workdir:~/project command:"pi 'Your task'"
-bash pty:true command:"pi -p 'Summarize src/'"
+pi -p 'Summarize src/'            # one-shot
+pi 'Your task'                    # interactive: use the terminal tool
 ```
 
-## Parallel Issue Fixing with Git Worktrees
+## Parallel work with git worktrees
+
+Give each agent its own worktree so they never edit the same checkout:
 
 ```bash
-# Create worktrees
-git worktree add -b fix/issue-78 /tmp/issue-78 main
-git worktree add -b fix/issue-99 /tmp/issue-99 main
-
-# Launch agents
-bash pty:true workdir:/tmp/issue-78 background:true command:"codex --yolo 'Fix issue #78'"
-bash pty:true workdir:/tmp/issue-99 background:true command:"codex --yolo 'Fix issue #99'"
-
-# Monitor
-process action:list
-process action:log sessionId:XXX
-
-# Cleanup
-git worktree remove /tmp/issue-78
+git worktree add -b fix/issue-78 ../issue-78 main
+git worktree add -b fix/issue-99 ../issue-99 main
+# run one agent per folder (exec workdir: ../issue-78, ../issue-99)
+git worktree remove ../issue-78   # after the branch is merged or pushed
 ```
 
 ## Rules
 
-1. Always use `pty:true`
-2. Be patient - don't kill slow sessions
-3. Monitor with `process:log`
-4. Use `--full-auto` for building, vanilla for reviewing
+1. Run agents in the project folder the user named; ask when it is unclear.
+2. Be patient: do not kill a slow run, check its log first.
+3. Summarize results for the user; do not paste raw logs.
