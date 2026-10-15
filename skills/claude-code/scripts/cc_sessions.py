@@ -14,12 +14,38 @@ Standard library only. Python 3.8+.
                         [--effort E] -- PROMPT
   cc_sessions.py list   [--all] [--json]
   cc_sessions.py status ID|NAME [--json]
-  cc_sessions.py send   ID|NAME MESSAGE
+  cc_sessions.py send   ID|NAME MESSAGE [--force | --no-queue]
+                        [--expire-after MINUTES]
+  cc_sessions.py queue  ID|NAME [--clear] [--json]
   cc_sessions.py wait   ID|NAME [--timeout SECONDS]
   cc_sessions.py stop   ID|NAME
 
 Environment: CLAUDE_BIN (default `claude`), CLAUDE_CONFIG_DIR (default
-~/.claude).
+~/.claude), CC_SESSIONS_STATE (where queued messages are kept; default
+$XDG_STATE_HOME/claude-code-sessions, else ~/.local/state/claude-code-sessions).
+
+Queued follow-ups. `send` to a session that is mid-turn does not interrupt
+it and does not refuse: it appends the message to a small per-session queue
+file and returns at once. A detached watcher process (its own session, so it
+outlives the caller) waits until the turn ends, delivers the next message the
+same way an idle `send` does, waits for that turn to end, and repeats, so
+messages arrive in order, one per turn. "Mid-turn" is the live process's
+`status` of `busy` in `claude agents --json`, read twice 5 s apart; `state`
+"working" alone also covers a session idle between steps it drives itself
+(a wait on CI), which counts as a turn boundary. The watcher exits
+when the queue is empty. Each message is attempted once; a failure is
+recorded, never retried. If the watcher dies (reboot, killed), its messages
+are not resent later: a pending message whose watcher has been gone for more
+than 10 minutes is marked `expired`, and one caught mid-delivery is marked
+`unknown`. A pending message also expires after --expire-after minutes
+(default 720). `queue` lists and cancels them; `status` shows them.
+
+Claude Code has no supported command-line way to queue into a running
+session. The input box queue belongs to the interactive screen (`claude
+attach`, agent view peek reply). Cross-session messaging (a session's inbox
+socket) is documented, but it arrives as a message from another session,
+not from the user, mid-turn, and a session in bypass mode holds it for the
+user's approval. So the helper waits for the turn boundary instead.
 
 Behaviour measured on Claude Code 2.1.284-2.1.300:
 - `claude --bg` prints `backgrounded · <8-hex id> · <name>` and returns.
@@ -35,6 +61,8 @@ Behaviour measured on Claude Code 2.1.284-2.1.300:
 """
 
 import argparse
+import contextlib
+import fcntl
 import glob
 import json
 import os
@@ -46,6 +74,12 @@ import time
 
 CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
 CONFIG = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+STATE = os.environ.get("CC_SESSIONS_STATE") or os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.join(os.path.expanduser("~"), ".local", "state"),
+    "claude-code-sessions")
+WATCHER_GONE = 600      # s without a watcher heartbeat before its messages expire
+TURN_GRACE = 120        # s to wait for a delivered message's turn to show up
+KEEP_FINISHED = 20      # finished queue entries kept per session for `queue`
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 MODES = {
     "bypass": ["--dangerously-skip-permissions"],
@@ -162,6 +196,18 @@ def state_of(s):
     return state, st
 
 
+def mid_turn(s):
+    """True while a turn is running. A live process reports `status` busy,
+    waiting or idle; `state` "working" also covers a session sitting idle
+    between steps it drives itself (a wait on CI, a /loop), which is a turn
+    boundary like any other."""
+    if not s.get("pid"):
+        return False
+    if s.get("status"):
+        return s["status"] == "busy"
+    return state_of(s)[0] == "working"
+
+
 def ago(ms):
     if not ms:
         return ""
@@ -198,6 +244,8 @@ def summary(s):
         "running": bool(s.get("pid")), "cwd": s.get("cwd") or "",
         "started": ago(s.get("startedAt")), "headline": one_line(headline),
         "sessionId": s.get("sessionId"),
+        "queued": len([i for i in load_queue(s["id"])["items"] if i["status"] == "pending"])
+        if os.path.exists(qpath(s["id"])) else 0,
     }
 
 
@@ -306,11 +354,15 @@ def cmd_list(a):
         print(f"{r['id']}  {r['state']:<8} {r['name'] or '-'}  [{r['started']}]")
         if r["headline"]:
             print(f"          {r['headline']}")
+        if r["queued"]:
+            print(f"          {r['queued']} queued message(s) waiting for this turn to end")
         print(f"          {r['cwd']}")
 
 
 def cmd_status(a):
     s = find(a.ref)
+    key = queue_key_for(s["id"])
+    ensure_watcher(key)
     row = summary(s)
     _, st = state_of(s)
     timeline = read_jsonl(os.path.join(job_dir(s["id"]), "timeline.jsonl"), tail=200)
@@ -327,6 +379,7 @@ def cmd_status(a):
         "timeline": steps[-6:],
         "tokens": st.get("tokens"),
         "git": git_summary(s.get("cwd")),
+        "queue": queue_view(key) if os.path.exists(qpath(key)) else None,
     })
     if a.json:
         print(json.dumps(row, indent=1, ensure_ascii=False))
@@ -352,31 +405,35 @@ def cmd_status(a):
             print(f"  {c}")
         if g.get("pr"):
             print(f"pr: {g['pr'].get('state')} {g['pr'].get('url')}")
+    if row["queue"] and row["queue"]["items"]:
+        print_queue(row["queue"])
     if last_text:
         print("last message:")
         print(last_text[-1500:])
 
 
-def cmd_send(a):
-    s = find(a.ref)
-    state, _ = state_of(s)
-    if state == "working" and not a.force:
-        die(f"{s['id']} is still working. Wait for it (`wait {s['id']}`), or pass "
-            "--force to interrupt the current turn and send this instead.", 4)
+class DeliveryError(Exception):
+    pass
+
+
+def deliver(s, message):
+    """Pause the session if it has a process, then continue it with MESSAGE.
+
+    Returns the id to follow and whether the new turn was seen starting."""
     if s.get("pid"):
         code, out, err = run([CLAUDE, "stop", s["id"]])
         if code != 0:
-            die(f"Could not pause {s['id']} to deliver the message: {err or out}")
+            raise DeliveryError(f"Could not pause {s['id']} to deliver the message: {err or out}")
     tl = os.path.join(job_dir(s["id"]), "timeline.jsonl")
     before = len(read_jsonl(tl))
     # No other flags: the session keeps its own saved options, and any flag here
     # would make the CLI start a copy instead of continuing this session.
-    code, out, err = run([CLAUDE, "--bg", "--resume", s["sessionId"], a.message],
+    code, out, err = run([CLAUDE, "--bg", "--resume", s["sessionId"], message],
                          cwd=s.get("cwd") or None, timeout=90)
     text = (out + "\n" + err).strip()
     m = re.search(r"backgrounded\s*\S\s*([0-9a-f]{8})", text)
     if code != 0 or not m:
-        die(f"Claude Code did not accept the message (exit {code}):\n{text}")
+        raise DeliveryError(f"Claude Code did not accept the message (exit {code}):\n{text}")
     new = m.group(1)
     # Return only once the new turn shows up, so an immediate `wait` cannot
     # mistake the previous turn's "done" for this one.
@@ -390,10 +447,352 @@ def cmd_send(a):
             started = True
             break
         time.sleep(2)
-    print(json.dumps({"id": new, "continued": new == s["id"], "turn_started": started,
-                      "note": "" if new == s["id"] else
-                      f"The CLI started a copy of {s['id']} as {new}; follow {new} from now on."},
-                     indent=1))
+    return {"id": new, "continued": new == s["id"], "turn_started": started,
+            "timeline_before": before,
+            "note": "" if new == s["id"] else
+            f"The CLI started a copy of {s['id']} as {new}; follow {new} from now on."}
+
+
+# Queued follow-ups. One JSON file per session under STATE:
+# {"id", "target", "watcher_pid", "watcher_seen", "last_delivery", "items"}.
+# `target` is the id messages go to; it moves when the CLI starts a copy.
+# Item status: pending -> delivering -> delivered | failed, or expired,
+# cancelled, unknown (the watcher died mid-delivery, so it may have landed).
+
+def qpath(key, ext=".json"):
+    return os.path.join(STATE, key + ext)
+
+
+@contextlib.contextmanager
+def queue_lock(key):
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    fd = os.open(qpath(key, ".lock"), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def load_queue(key):
+    q = read_json(qpath(key)) or {}
+    q.setdefault("id", key)
+    q.setdefault("items", [])
+    return q
+
+
+def save_queue(q):
+    live = [i for i in q["items"] if i["status"] in ("pending", "delivering")]
+    done = [i for i in q["items"] if i not in live][-KEEP_FINISHED:]
+    q["items"] = sorted(done + live, key=lambda i: i["n"])
+    tmp = qpath(q["id"], ".json.tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(q, f, indent=1, ensure_ascii=False)
+    os.replace(tmp, qpath(q["id"]))
+
+
+def live_items(q):
+    return [i for i in q["items"] if i["status"] in ("pending", "delivering")]
+
+
+def now_iso():
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
+def pid_alive(pid):
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def queue_key_for(sid):
+    """The queue that delivers to SID: its own, or one whose messages moved to
+    SID when the CLI started a copy."""
+    if os.path.exists(qpath(sid)):
+        return sid
+    paths = sorted(glob.glob(os.path.join(STATE, "*.json")), key=os.path.getmtime, reverse=True)
+    for path in paths:
+        q = read_json(path) or {}
+        if q.get("target") == sid and q.get("id"):
+            return q["id"]
+    return sid
+
+
+def reconcile(key):
+    """Settle a queue whose watcher is gone. Returns True when a watcher must
+    be started for messages that are still current."""
+    if not os.path.exists(qpath(key)):
+        return False
+    with queue_lock(key):
+        q = load_queue(key)
+        live = live_items(q)
+        if not live or pid_alive(q.get("watcher_pid")):
+            return False
+        seen = q.get("watcher_seen") or max(i["queued_ts"] for i in live)
+        gone = time.time() - seen > WATCHER_GONE
+        for i in live:
+            if i["status"] == "delivering":
+                i.update(status="unknown", finished=now_iso(),
+                         error="The watcher stopped during delivery, so it may or may not "
+                               "have arrived. Check `status` before sending it again.")
+            elif gone:
+                i.update(status="expired", finished=now_iso(),
+                         error="The delivery watcher stopped (computer restarted or the "
+                               "process was killed) and the message is too old to send now.")
+        save_queue(q)
+        return any(i["status"] == "pending" for i in q["items"])
+
+
+def spawn_watcher(key):
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    with open(qpath(key, ".log"), "a", encoding="utf-8") as log:
+        p = subprocess.Popen([sys.executable, os.path.abspath(__file__), "_watch", key],
+                             stdin=subprocess.DEVNULL, stdout=log, stderr=log, cwd=STATE,
+                             start_new_session=True, close_fds=True)
+    for _ in range(20):  # until it has registered, so `queue` right after is accurate
+        if (read_json(qpath(key)) or {}).get("watcher_pid") == p.pid or p.poll() is not None:
+            break
+        time.sleep(0.1)
+
+
+def ensure_watcher(key):
+    if reconcile(key):
+        spawn_watcher(key)
+
+
+def enqueue(key, sid, message, expire_after):
+    with queue_lock(key):
+        q = load_queue(key)
+        q.setdefault("target", sid)
+        n = max([i["n"] for i in q["items"]] or [0]) + 1
+        q["items"].append({"n": n, "message": message, "status": "pending",
+                           "queued": now_iso(), "queued_ts": time.time(),
+                           "expires_ts": time.time() + expire_after * 60})
+        save_queue(q)
+        position = len(live_items(q))
+        alive = pid_alive(q.get("watcher_pid"))
+    if not alive:
+        spawn_watcher(key)
+    return n, position
+
+
+def lookup(sid):
+    """The session record for SID, or None if it is gone. Asks the live list
+    first (one CLI call), the full list only when the process is gone. A CLI
+    failure exits via die(), which the watcher catches and retries."""
+    for include_done in (False, True):
+        for s in sessions(include_done=include_done):
+            if s["id"] == sid:
+                return s
+    return None
+
+
+def watch(key):
+    """Detached delivery loop for one session's queue (`_watch KEY`)."""
+    os.makedirs(STATE, mode=0o700, exist_ok=True)
+    lock_fd = os.open(qpath(key, ".watcher"), os.O_CREAT | os.O_RDWR, 0o600)
+    for _ in range(10):
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            break
+        except OSError:
+            time.sleep(0.3)
+    else:
+        return  # another watcher owns this queue
+
+    def log(msg):
+        print(f"{now_iso()} [{key}] {msg}", flush=True)
+
+    with queue_lock(key):
+        q = load_queue(key)
+        q["watcher_pid"], q["watcher_seen"] = os.getpid(), time.time()
+        save_queue(q)
+    log("watcher started")
+    cli_errors, last_check, quiet = 0, 0.0, 0
+    while True:
+        with queue_lock(key):
+            q = load_queue(key)
+            q["watcher_seen"] = time.time()
+            for i in q["items"]:
+                if i["status"] == "pending" and time.time() > i.get("expires_ts", 1e18):
+                    i.update(status="expired", finished=now_iso(),
+                             error="The session stayed busy past --expire-after.")
+            pending = [i for i in q["items"] if i["status"] == "pending"]
+            if not pending:
+                q["watcher_pid"] = None
+                save_queue(q)
+                # Let go while the queue lock is still held: a concurrent `send`
+                # either queued before this check (and we saw it), or sees no
+                # watcher afterwards and starts one that can take the lock.
+                os.close(lock_fd)
+                log("queue empty, watcher exiting")
+                return
+            save_queue(q)
+            item, target = pending[0], q.get("target") or key
+            last = q.get("last_delivery") or {}
+        # Cheap check first: state.json. Ask the CLI when that says the turn
+        # is over, else every 15 s: "working" there also covers a process that
+        # sits idle between its own steps, or one that died mid-turn.
+        st = read_json(os.path.join(job_dir(target), "state.json")) or {}
+        if st.get("state") == "working" and time.time() - last_check < 15:
+            time.sleep(5)
+            continue
+        last_check = time.time()
+        why = f"Session {target} no longer exists."
+        try:
+            s = lookup(target)
+            cli_errors = 0
+        except SystemExit:
+            cli_errors += 1
+            if cli_errors < 20:
+                time.sleep(15)
+                continue
+            s, why = None, "`claude agents` kept failing; see the watcher log."
+        if s is None:
+            with queue_lock(key):
+                q = load_queue(key)
+                for i in q["items"]:
+                    if i["status"] == "pending":
+                        i.update(status="failed", finished=now_iso(), error=why)
+                save_queue(q)
+            log(why)
+            continue
+        state, _ = state_of(s)
+        # The previous queued message's turn must have shown up before the
+        # next one goes, so two messages never land in one turn.
+        seen_turn = True
+        if last.get("target") == target:
+            grown = len(read_jsonl(os.path.join(job_dir(target), "timeline.jsonl"))) \
+                > last.get("timeline_before", 0)
+            seen_turn = grown or time.time() - last.get("at_ts", 0) > TURN_GRACE
+        # Two quiet readings in a row, so a brief idle moment between a turn's
+        # steps is not taken for its end.
+        quiet = 0 if mid_turn(s) or not seen_turn else quiet + 1
+        if quiet < 2:
+            if quiet:
+                last_check = 0.0  # take the second reading on the next pass
+            time.sleep(5)
+            continue
+        quiet = 0
+        with queue_lock(key):
+            q = load_queue(key)
+            cur = next((i for i in q["items"] if i["n"] == item["n"]), None)
+            if cur is None or cur["status"] != "pending":
+                continue  # cancelled meanwhile
+            cur.update(status="delivering", started=now_iso(), session_state=state)
+            save_queue(q)
+        log(f"delivering #{item['n']} to {target} (state {state})")
+        r, err = None, None
+        try:
+            r = deliver(s, item["message"])
+        except DeliveryError as e:
+            err = str(e)
+        except SystemExit:
+            err = "The Claude Code CLI did not answer; see the watcher log."
+        with queue_lock(key):
+            q = load_queue(key)
+            cur = next(i for i in q["items"] if i["n"] == item["n"])
+            if r:
+                cur.update(status="delivered", finished=now_iso(), delivered_to=r["id"],
+                           turn_started=r["turn_started"], note=r["note"])
+                q["target"] = r["id"]
+                q["last_delivery"] = {"target": r["id"], "at_ts": time.time(),
+                                      "timeline_before": r["timeline_before"]}
+            else:
+                cur.update(status="failed", finished=now_iso(), error=err)
+            save_queue(q)
+        log(f"#{item['n']} " + (f"delivered to {r['id']}" if r else f"failed: {err}"))
+
+
+def queue_view(key, recent=5):
+    q = load_queue(key)
+    live = live_items(q)
+    rows = []
+    for i in [i for i in q["items"] if i not in live][-recent:] + live:
+        row = {k: i[k] for k in ("n", "status", "queued", "finished", "delivered_to",
+                                  "error", "note") if i.get(k)}
+        row["message"] = one_line(i["message"], 120)
+        rows.append(row)
+    return {"id": key, "target": q.get("target") or key,
+            "watcher_running": pid_alive(q.get("watcher_pid")),
+            "pending": sum(1 for i in live if i["status"] == "pending"), "items": rows}
+
+
+def cmd_send(a):
+    s = find(a.ref)
+    key = queue_key_for(s["id"])
+    ensure_watcher(key)
+    busy = mid_turn(s)
+    earlier = live_items(load_queue(key))
+    if not a.force and (busy or earlier):
+        if a.no_queue:
+            die(f"{s['id']} is still working. Wait for it (`wait {s['id']}`), send without "
+                "--no-queue to queue the message, or pass --force to interrupt the "
+                "current turn.", 4)
+        n, pos = enqueue(key, s["id"], a.message, a.expire_after)
+        why = "is mid-turn" if busy else "has earlier queued messages"
+        print(json.dumps({"id": s["id"], "queued": True, "position": pos, "item": n,
+                          "note": f"{s['id']} {why}. The message goes in when the current "
+                                  "turn ends, without interrupting it. "
+                                  f"`queue {s['id']}` shows it; `queue {s['id']} --clear` "
+                                  "cancels."}, indent=1))
+        return
+    try:
+        r = deliver(s, a.message)
+    except DeliveryError as e:
+        die(str(e))
+    r.pop("timeline_before")
+    r["queued"] = False
+    print(json.dumps(r, indent=1))
+
+
+def cmd_queue(a):
+    s = find(a.ref)
+    key = queue_key_for(s["id"])
+    ensure_watcher(key)
+    if a.clear:
+        if not os.path.exists(qpath(key)):
+            print(json.dumps({"id": key, "cancelled": 0, "note": ""}, indent=1))
+            return
+        with queue_lock(key):
+            q = load_queue(key)
+            n = 0
+            for i in q["items"]:
+                if i["status"] == "pending":
+                    i.update(status="cancelled", finished=now_iso())
+                    n += 1
+            save_queue(q)
+            busy = [i["n"] for i in live_items(q)]
+        print(json.dumps({"id": key, "cancelled": n,
+                          "note": f"#{busy[0]} is being delivered right now and cannot be "
+                                  "cancelled." if busy else ""}, indent=1))
+        return
+    v = queue_view(key)
+    if a.json:
+        print(json.dumps(v, indent=1, ensure_ascii=False))
+        return
+    if not v["items"]:
+        print(f"No queued messages for {key}.")
+        return
+    print_queue(v)
+
+
+def print_queue(v):
+    print(f"queue: {v['pending']} pending, watcher "
+          f"{'running' if v['watcher_running'] else 'not running'}"
+          + (f", delivering to {v['target']}" if v["target"] != v["id"] else ""))
+    for i in v["items"]:
+        to = f" -> {i['delivered_to']}" if i.get("delivered_to") else ""
+        print(f"  #{i['n']} {i['status']:<10} {i.get('finished') or i.get('queued')}{to}  {i['message']}")
+        if i.get("error") or i.get("note"):
+            print(f"      {i.get('error') or i.get('note')}")
 
 
 def cmd_wait(a):
@@ -419,6 +818,9 @@ def cmd_stop(a):
 
 
 def main():
+    if sys.argv[1:2] == ["_watch"] and len(sys.argv) == 3:
+        watch(sys.argv[2])  # the detached delivery process spawned by `send`
+        return
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     st = sub.add_parser("start")
@@ -439,7 +841,17 @@ def main():
     sd = sub.add_parser("send")
     sd.add_argument("ref")
     sd.add_argument("message")
-    sd.add_argument("--force", action="store_true")
+    how = sd.add_mutually_exclusive_group()
+    how.add_argument("--force", action="store_true",
+                     help="interrupt the current turn and deliver now")
+    how.add_argument("--no-queue", action="store_true",
+                     help="refuse (exit 4) instead of queueing while the session works")
+    sd.add_argument("--expire-after", type=int, default=720, metavar="MINUTES",
+                    help="drop a queued message not delivered within this time (default 720)")
+    qu = sub.add_parser("queue", help="show or cancel queued follow-up messages")
+    qu.add_argument("ref")
+    qu.add_argument("--clear", action="store_true", help="cancel every pending message")
+    qu.add_argument("--json", action="store_true")
     wt = sub.add_parser("wait")
     wt.add_argument("ref")
     wt.add_argument("--timeout", type=int, default=150)
@@ -449,7 +861,7 @@ def main():
     if a.cmd == "start" and a.prompt[:1] == ["--"]:
         a.prompt = a.prompt[1:]
     {"start": cmd_start, "list": cmd_list, "status": cmd_status, "send": cmd_send,
-     "wait": cmd_wait, "stop": cmd_stop}[a.cmd](a)
+     "queue": cmd_queue, "wait": cmd_wait, "stop": cmd_stop}[a.cmd](a)
 
 
 if __name__ == "__main__":
