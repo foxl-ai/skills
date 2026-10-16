@@ -62,7 +62,6 @@ Behaviour measured on Claude Code 2.1.284-2.1.300:
 
 import argparse
 import contextlib
-import fcntl
 import glob
 import json
 import os
@@ -72,6 +71,11 @@ import subprocess
 import sys
 import time
 
+try:
+    import fcntl  # POSIX only; Windows Python has no such module
+except ImportError:
+    fcntl = None
+
 CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
 CONFIG = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
 STATE = os.environ.get("CC_SESSIONS_STATE") or os.path.join(
@@ -80,6 +84,10 @@ STATE = os.environ.get("CC_SESSIONS_STATE") or os.path.join(
 WATCHER_GONE = 600      # s without a watcher heartbeat before its messages expire
 TURN_GRACE = 120        # s to wait for a delivered message's turn to show up
 KEEP_FINISHED = 20      # finished queue entries kept per session for `queue`
+# The queue needs flock() and a POSIX process probe, so it is macOS and Linux
+# only. On Windows `send` to a busy session refuses (exit 4), as it always did,
+# and no queue file is ever written, so no queue code path runs there.
+QUEUE_SUPPORTED = fcntl is not None and os.name == "posix"
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 MODES = {
     "bypass": ["--dangerously-skip-permissions"],
@@ -501,7 +509,8 @@ def now_iso():
 
 
 def pid_alive(pid):
-    if not pid:
+    # Never os.kill() on Windows: there it terminates the process, it does not probe.
+    if not pid or os.name != "posix":
         return False
     try:
         os.kill(pid, 0)
@@ -732,7 +741,11 @@ def cmd_send(a):
     busy = mid_turn(s)
     earlier = live_items(load_queue(key))
     if not a.force and (busy or earlier):
-        if a.no_queue:
+        if a.no_queue or not QUEUE_SUPPORTED:
+            if not QUEUE_SUPPORTED:
+                die(f"{s['id']} is still working. Queueing follow-ups is not available on "
+                    f"this platform, so wait for it (`wait {s['id']}`) and send again, or "
+                    "pass --force to interrupt the current turn.", 4)
             die(f"{s['id']} is still working. Wait for it (`wait {s['id']}`), send without "
                 "--no-queue to queue the message, or pass --force to interrupt the "
                 "current turn.", 4)
@@ -755,6 +768,9 @@ def cmd_send(a):
 
 def cmd_queue(a):
     s = find(a.ref)
+    if not QUEUE_SUPPORTED:
+        print(f"Queued follow-ups are not available on this platform; {s['id']} has none.")
+        return
     key = queue_key_for(s["id"])
     ensure_watcher(key)
     if a.clear:

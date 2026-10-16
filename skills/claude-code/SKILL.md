@@ -135,6 +135,10 @@ message the same way an idle `send` does. "Turn ended" includes a session that
 is waiting on its own work (for example CI) with nothing running, and one that
 was stopped or is waiting on the user.
 
+The queue works on macOS and Linux. On Windows `send` to a busy session
+refuses (exit 4) instead: offer to send it once the turn ends (`wait`, then
+`send`), or to interrupt with `--force` only if the user wants that.
+
 **"Stop it" / "Cancel"**
 
 `stop ID`. Work done so far stays in the worktree. Deleting a session and its
