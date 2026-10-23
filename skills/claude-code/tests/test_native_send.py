@@ -50,6 +50,7 @@ class FakeSupervisor:
         self.mode = "ok"
         self.version = "2.1.308"
         self.proto = 1
+        self.carried_prompts_format = 1
         self.jobs = [{"short": SID, "sessionId": UUID, "pid": os.getpid(), "backend": "daemon",
                       "cliVersion": self.version, "state": "working"}]
         self.closed = threading.Event()
@@ -80,8 +81,9 @@ class FakeSupervisor:
                     self.calls.append({key: value for key, value in req.items() if key not in ("auth", "text")})
                     op = req["op"]
                     if op == "ping":
-                        reply = {"ok": True, "op": op, "version": self.version,
-                                 "proto": self.proto, "carriedPromptsFormat": 1}
+                        reply = {"ok": True, "op": op, "version": self.version, "proto": self.proto}
+                        if self.carried_prompts_format is not None:
+                            reply["carriedPromptsFormat"] = self.carried_prompts_format
                     elif op == "list":
                         reply = {"ok": True, "op": op, "jobs": self.jobs}
                     elif op == "reply":
@@ -507,7 +509,7 @@ class TransportTests(IsolatedCase):
         self.assertFalse(self.state.exists())
 
     def test_unknown_cli_daemon_and_protocol_fail_closed(self):
-        (self.root / "version.txt").write_text("claude 2.1.300")
+        (self.root / "version.txt").write_text("claude 2.1.301")
         code, result = self.call("send", SID, TEXT)
         self.assertEqual(result["error_code"], "EVERSION")
         (self.root / "version.txt").write_text("claude 2.1.309.1365")

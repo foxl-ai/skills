@@ -16,6 +16,16 @@ The three realistic prompts in `../evals/evals.json` have deterministic command
 routing expectations. `EvalTests` executes those routes against fixtures. This
 validates helper behavior, not whether a language model chooses the correct tool.
 
+`test_native_compatibility.py` adds exact native `2.1.300 (Claude Code)` version
+output, strict build suffix rejection, reviewed CLI/supervisor combinations,
+matching-worker enforcement, isolated subprocess busy/idle sends with a real
+fixture parent/child pair, receipt dedupe, unknown-outcome suppression, fresh
+config refusal, config-derived socket hashing, auth failures, and the explicit
+`2.1.293` refusal for its missing queue-format capability. These are still fake
+CLI/supervisor tests, not real Claude/model tests. See
+`../reference/standalone-compatibility.md` for the static review and separate
+operator-owned standalone canary procedure.
+
 ## Contract and operational limits
 
 `../reference/native-reply-contract.json` records only independently described
@@ -50,8 +60,11 @@ and do not mix old/new helper binaries. No migration step deletes sessions.
 ## Optional operator-owned live canary
 
 Not part of the test suite. Requires explicit permission to create a disposable
-new task and to send/stop only that task. Use the normal configured wrapper,
+new task and to send/stop only that task. Use the normal configured CLI or wrapper,
 trusted scratch folder, minimal permissions and an unmistakable test name.
+A standalone canary must explicitly select its native executable and keep its
+private HOME/config/state separate. Never change an installed skill, bypass a
+configured wrapper or fabricate a new trust grant to run this optional test.
 
 1. Record the pre-test native IDs and create one intentionally new session with
    `spawn`. Never select another person's existing session.

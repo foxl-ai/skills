@@ -1,9 +1,12 @@
 {
   "status": "unsupported private protocol, not a public API",
   "reviewed_on": "2026-10-23",
-  "evidence": "Independent wire-contract inspection of locally installed binaries. No vendor source, secrets or local session content included. Read-only ping/list confirmed against 2.1.308 and 2.1.309. Live 2.1.309 canary confirmed busy and idle delivery, one queued-command attachment for a repeated request key, unchanged short ID/full UUID/REPL PID, and one test-directory session throughout. 2.1.308 reply consumption was not live-tested.",
-  "configured_cli_builds": ["2.1.308.1355", "2.1.309.1365"],
-  "supervisor_versions": ["2.1.308", "2.1.309"],
+  "evidence": "Independent wire-contract inspection of locally installed binaries. No vendor source, secrets or local session content included. Read-only ping/list confirmed against 2.1.308 and 2.1.309. Live 2.1.309 canary confirmed busy and idle delivery, one queued-command attachment for a repeated request key, unchanged short ID/full UUID/REPL PID, and one test-directory session throughout. 2.1.308 reply consumption was not live-tested. Native 2.1.300 was also live-tested with an isolated same-version supervisor and normal Bedrock auth: busy and idle markers consumed once, repeated request keys suppressed, one session with unchanged short ID/full UUID/REPL PID. Native 2.1.293 read-only ping confirmed its missing carriedPromptsFormat capability; no reply attempted. See standalone-compatibility.md for scope and evidence.",
+  "configured_cli_builds": ["2.1.300", "2.1.308.1355", "2.1.309.1365"],
+  "supervisor_versions": ["2.1.300", "2.1.308", "2.1.309"],
+  "reviewed_but_refused_cli_builds": {
+    "2.1.293": "nextTurn exists, but ping does not advertise carriedPromptsFormat. The required format-1 capability check is not weakened or inferred from the version."
+  },
   "worker_requirement": "Worker cliVersion must equal supervisor version for nextTurn=true",
   "transport": "Unix stream socket, one UTF-8 JSON request followed by newline, one newline-delimited JSON response per connection",
   "socket_layout": "/tmp/cc-daemon-<effective-user-id>/<first-8-hex-of-sha256-absolute-config-path>/control.sock",
