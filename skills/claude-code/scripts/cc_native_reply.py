@@ -17,8 +17,14 @@ import sys
 import time
 
 PROTOCOL = 1
-CLI_VERSIONS = frozenset({"2.1.308.1355", "2.1.309.1365"})
-DAEMON_VERSIONS = frozenset({"2.1.308", "2.1.309"})
+# Exact reviewed builds only. Native and Toolbox distributions share this wire
+# contract, not necessarily their version strings. Never infer support by range.
+CLI_VERSIONS = frozenset({"2.1.300", "2.1.308.1355", "2.1.309.1365"})
+DAEMON_VERSIONS = frozenset({"2.1.300", "2.1.308", "2.1.309"})
+UNSUPPORTED_CLI = {
+    "2.1.293": "Claude Code 2.1.293 lacks the required carriedPromptsFormat=1 supervisor capability. "
+                 "Its nextTurn field alone is not sufficient for this bridge.",
+}
 SHORT_ID = re.compile(r"[0-9a-f]{8}\Z")
 SESSION_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 MAX_REPLY = 64 * 1024
@@ -128,7 +134,8 @@ class NativeReply:
         if os.name != "posix" or not hasattr(os, "getuid") or os.getuid() != os.geteuid():
             reject("EPLATFORM", "Native reply requires a non-setuid POSIX process.")
         if cli_version not in CLI_VERSIONS:
-            reject("EVERSION", "This configured Claude CLI version has not been reviewed for native reply.")
+            reject("EVERSION", UNSUPPORTED_CLI.get(cli_version,
+                   "This configured Claude CLI version has not been reviewed for native reply."))
         self.config = Path(os.path.abspath(os.path.expanduser(config)))
         self.cli_version = cli_version
         self.timeout = max(0.05, min(float(timeout), 10.0))

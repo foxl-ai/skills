@@ -64,8 +64,10 @@ def need_bg_support():
 
 def cli_version():
     code, out, _ = run([CLAUDE, "--version"], timeout=15)
-    # Explicitly reviewed wrapper build identifiers, not assumed public semver support.
-    hits = re.findall(r"\b\d+\.\d+\.\d+(?:\.\d+)?\b", out)
+    # Native output is "2.1.300 (Claude Code)"; Toolbox includes a fourth build
+    # component. Neither format implies support: NativeReply uses exact allowlists.
+    # Do not accept an unreviewed suffix or a truncated multi-component build.
+    hits = re.findall(r"(?<![\w.+-])\d+\.\d+\.\d+(?:\.\d+)?(?![\w.+-])", out)
     if code or len(hits) != 1:
         raise BridgeError("EVERSION", "Cannot identify the configured CLI build safely.")
     return hits[0]

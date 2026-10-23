@@ -14,8 +14,11 @@ Use one helper, where `<skill-dir>` is this skill's directory:
 python3 <skill-dir>/scripts/cc_sessions.py <command> ...
 ```
 
-Python 3.8+. All CLI calls use `CLAUDE_BIN` (default `claude`), including the
-normal Toolbox wrapper and its authentication/settings. Never bypass that wrapper.
+Python 3.8+. All CLI calls use `CLAUDE_BIN` (default `claude`) exactly as configured,
+whether a standalone/native installation or a Toolbox wrapper with its normal
+authentication/settings. Never auto-discover another installation, unwrap Toolbox,
+or change the user's binary, config, provider, auth, or running daemon to make a
+command work. An explicit standalone selection does not change the default.
 New sessions use supported `--bg` (Claude Code 2.1.284+), with the project's
 existing trust confirmation. Do not bypass trust or permission prompts.
 
@@ -58,12 +61,16 @@ Never change keys to evade an `unknown` outcome.
 Native `send` is an **unsupported private POSIX bridge**, not an official CLI command.
 On Windows use the agents UI for replies. Spawn, list, status and stop remain
 normal CLI operations there; no POSIX process probes or receipt writes run.
-The exact reviewed Toolbox CLI builds are `2.1.308.1355` and `2.1.309.1365`.
-Reviewed supervisors are `2.1.308` and `2.1.309`, protocol 1. The target worker
-must match its supervisor. CLI/supervisor upgrade skew is allowed only inside
-that reviewed set. Other builds, absent daemons, unsafe paths, auth failures and
-unavailable/stopped targets fail closed. Do not restart the daemon or downgrade
-security to make a send work. Run `doctor` to diagnose.
+The exact reviewed CLI builds are native `2.1.300` and Toolbox `2.1.308.1355` /
+`2.1.309.1365`. Reviewed supervisors are `2.1.300`, `2.1.308` and `2.1.309`, with
+protocol 1 and `carriedPromptsFormat: 1`. The target worker must match its
+supervisor. CLI/supervisor upgrade skew is allowed only inside that reviewed set.
+Native `2.1.293` is deliberately refused: its `nextTurn` field alone is insufficient,
+since its ping lacks the required queue-format capability. Adjacent versions,
+suffixed builds, absent daemons, unsafe paths, auth failures and unavailable/stopped
+targets fail closed. Do not restart the daemon or downgrade security to make a
+send work. Run `doctor` to diagnose. Standalone static review and offline tests do
+not prove live consumption; see `reference/standalone-compatibility.md`.
 
 ## What to report
 
