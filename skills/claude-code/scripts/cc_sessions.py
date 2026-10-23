@@ -439,6 +439,13 @@ def cmd_wait(a):
 
 def cmd_stop(a):
     s = find(a.ref)
+    if os.name != "posix":
+        # The retired helper queue never ran on Windows. Keep native stop usable
+        # there without POSIX locks, UID calls or os.kill(pid, 0).
+        code, _, _ = run([CLAUDE, "stop", s["id"]])
+        print(json.dumps({"id": s["id"], "stopped": code == 0,
+                          "automatic_replay": False, "legacy_cancelled": 0}, indent=1))
+        return code
     box = Outbox(STATE, CONFIG)
     with box.mutation_guard() as legacy:
         box.assert_current(legacy, s["id"])

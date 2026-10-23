@@ -23,7 +23,11 @@ wire shapes and exact reviewed versions. It contains no vendor implementation,
 secret, native session ID, prompt history or user path.
 
 Every follow-up uses a read-only CLI lookup plus supervisor ping/list to verify
-short ID, full session UUID, PID, daemon backend and worker version. The bridge
+short ID, full session UUID, daemon backend and worker version. The supervisor's
+PID identifies its worker, while `agents --json` identifies the REPL child, as
+observed in the live 2.1.309 canary. Both must be same-user live processes, either
+the same PID or a direct parent/child pair. Their process start times and
+relationship are rechecked immediately before reply. The bridge
 pins the socket identity and kernel peer across checks and reply, uses normal
 local auth, sets `nextTurn: true`, and sends exactly once. There is no daemon
 startup, auth refresh retry, registry edit, CLI resume, fork, or queue watcher.

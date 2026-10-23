@@ -1,7 +1,7 @@
 {
   "status": "unsupported private protocol, not a public API",
   "reviewed_on": "2026-10-23",
-  "evidence": "Independent wire-contract inspection of locally installed binaries. No vendor source or local session content included. Read-only ping/list confirmed against a running 2.1.308 supervisor. Fake-server tests are not a claim of live reply consumption.",
+  "evidence": "Independent wire-contract inspection of locally installed binaries. No vendor source, secrets or local session content included. Read-only ping/list confirmed against 2.1.308 and 2.1.309. Live 2.1.309 canary confirmed busy and idle delivery, one queued-command attachment for a repeated request key, unchanged short ID/full UUID/REPL PID, and one test-directory session throughout. 2.1.308 reply consumption was not live-tested.",
   "configured_cli_builds": ["2.1.308.1355", "2.1.309.1365"],
   "supervisor_versions": ["2.1.308", "2.1.309"],
   "worker_requirement": "Worker cliVersion must equal supervisor version for nextTurn=true",
@@ -9,6 +9,7 @@
   "socket_layout": "/tmp/cc-daemon-<effective-user-id>/<first-8-hex-of-sha256-absolute-config-path>/control.sock",
   "authentication": "Normal local control.key from <config>/daemon. Read only, 32 lowercase hexadecimal characters, owned by caller, mode 0600, no links. Never emitted in logs or fixtures.",
   "peer_validation": "Kernel peer UID and PID, same caller UID, pinned socket inode and peer for the operation",
+  "process_identity": "Supervisor list.pid is the worker; agents --json pid is its REPL, observed as a direct child on the live 2.1.309 canary. Require both live same-user PIDs, same process or direct parent-child, and recheck the process pair/start times immediately before sending.",
   "ping_request": {"proto": 1, "op": "ping"},
   "ping_response_shape": {"ok": true, "op": "ping", "version": "reviewed supervisor version", "proto": 1, "carriedPromptsFormat": 1},
   "list_request": {"proto": 1, "op": "list"},

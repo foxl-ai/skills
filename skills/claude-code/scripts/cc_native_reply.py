@@ -12,6 +12,7 @@ import re
 import socket
 import stat
 import struct
+import subprocess
 import sys
 import time
 
@@ -78,6 +79,38 @@ def peer_identity(sock):
     return uid, pid
 
 
+def validate_process_pair(worker_pid, repl_pid):
+    """The supervisor owns a worker; agents --json reports its REPL child.
+
+    Observed on the actual 2.1.309 canary, not interchangeable PID fields.
+    Require both PIDs to exist under this UID and permit only the same process
+    or a direct child. Never accept arbitrary descendant or recycled PIDs.
+    """
+    if any(type(pid) is not int or pid <= 0 for pid in (worker_pid, repl_pid)):
+        reject("ETARGET", "The worker/REPL process identity is unavailable.")
+    try:
+        result = subprocess.run(
+            ["/bin/ps", "-p", ",".join(str(pid) for pid in sorted({worker_pid, repl_pid})),
+             "-o", "pid=,ppid=,uid=,lstart="],
+            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=2)
+        rows = {}
+        for line in result.stdout.splitlines():
+            parts = line.split(None, 3)
+            if len(parts) != 4:
+                raise ValueError()
+            pid, parent, uid = map(int, parts[:3])
+            if pid in rows or uid != os.getuid():
+                raise ValueError()
+            rows[pid] = (parent, uid, parts[3])
+        if result.returncode or set(rows) != {worker_pid, repl_pid}:
+            raise ValueError()
+        if worker_pid != repl_pid and rows[repl_pid][0] != worker_pid:
+            raise ValueError()
+        return tuple((pid, *rows[pid]) for pid in sorted(rows))
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        reject("ETARGET", "The native worker and REPL are not a verified same-user process pair.")
+
+
 def strict_json(data):
     def pairs(items):
         out = {}
@@ -108,6 +141,8 @@ class NativeReply:
         self.peer = None
         self.daemon_version = None
         self._prepared = None
+        self._worker_pid = None
+        self._process_pair = None
 
     def _validate_path(self):
         safe_ancestors(self.config)
@@ -227,12 +262,14 @@ class NativeReply:
         if len(matches) != 1:
             reject("ETARGET", "The target is missing or ambiguous in the supervisor.")
         job = matches[0]
-        if (job.get("sessionId") != uuid or job.get("pid") != session["pid"] or
-                job.get("backend") != "daemon" or job.get("dying") or job.get("outcome") or
-                job.get("legacy") or job.get("state") in ("stopped", "failed")):
+        if (job.get("sessionId") != uuid or job.get("backend") != "daemon" or
+                job.get("dying") or job.get("outcome") or job.get("legacy") or
+                job.get("state") in ("stopped", "failed")):
             reject("ETARGET", "The target identity changed, is unavailable, or is not a native daemon session.")
         if job.get("cliVersion") != self.daemon_version:
             reject("ESKEW", "Safe-boundary reply requires the worker and supervisor to run the same reviewed build.")
+        self._worker_pid = job.get("pid")
+        self._process_pair = validate_process_pair(self._worker_pid, session["pid"])
         self._prepared = (sid, uuid, session["pid"])
         return {"id": sid, "sessionId": uuid, "worker_version": job["cliVersion"],
                 "daemon_version": self.daemon_version, "protocol": PROTOCOL}
@@ -248,6 +285,8 @@ class NativeReply:
             raise
         except (OSError, UnicodeError):
             reject("EAUTHFILE", "The normal local supervisor control key is unavailable.")
+        if validate_process_pair(self._worker_pid, session["pid"]) != self._process_pair:
+            reject("ECHANGED", "The native worker/REPL changed after preparation. No reply was sent.")
         # nextTurn uses native safe-boundary queue semantics, including while idle.
         try:
             response = self._rpc({"proto": PROTOCOL, "op": "reply", "short": session["id"],

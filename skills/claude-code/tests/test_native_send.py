@@ -318,6 +318,22 @@ class SendTests(IsolatedCase):
         self.assertEqual(self.reply_count(), 0)
         self.assertEqual([call for call in self.cli_calls() if call[0] not in ("agents", "--version")], [["stop", SID]])
 
+    def test_non_posix_status_and_stop_do_not_use_posix_receipt_calls(self):
+        box = outbox.Outbox(str(self.state), str(self.config))
+        with patch.object(outbox.os, "name", "nt"), patch.object(outbox, "checked_read", side_effect=AssertionError):
+            view = box.view(self.session)
+            self.assertFalse(view["supported"])
+            self.assertEqual(view["items"], [])
+        output = io.StringIO()
+        with patch.object(helper.os, "name", "nt"), patch.object(helper, "find", return_value=self.session), \
+                patch.object(helper, "run", return_value=(0, "", "")) as run, \
+                patch.object(helper, "Outbox", side_effect=AssertionError), redirect_stdout(output):
+            code = helper.cmd_stop(argparse.Namespace(ref=SID))
+        self.assertEqual(code, 0)
+        run.assert_called_once_with([helper.CLAUDE, "stop", SID])
+        self.assertTrue(json.loads(output.getvalue())["stopped"])
+        self.assertEqual(self.reply_count(), 0)
+
     def test_retired_options_refuse_without_cli_calls(self):
         for option in (("--force",), ("--no-queue",), ("--expire-after", "10")):
             code, result = self.call("send", SID, TEXT, *option)
@@ -397,6 +413,37 @@ class SendTests(IsolatedCase):
 
 
 class TransportTests(IsolatedCase):
+    def test_actual_worker_parent_and_repl_child_contract(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL)
+        try:
+            self.session["pid"] = child.pid
+            self.set_sessions([self.session])
+            # Real supervisor list reports the worker, CLI list reports its child.
+            self.server.jobs[0]["pid"] = os.getpid()
+            code, result = self.call("send", SID, TEXT, "--request-id", "parent-child")
+            self.assertEqual(code, 0)
+            self.assertTrue(result["accepted"])
+            self.assertEqual(self.reply_count(), 1)
+        finally:
+            child.terminate()
+            child.wait(timeout=5)
+
+    def test_unrelated_or_changed_process_pair_refuses_before_reply(self):
+        self.server.jobs[0]["pid"] = 1  # Not a same-user direct parent of this test.
+        self.assertEqual(self.call("send", SID, TEXT)[0], 4)
+        self.assertEqual(self.reply_count(), 0)
+        self.server.jobs[0]["pid"] = os.getpid()
+        bridge = self.bridge()
+        bridge.prepare(self.session)
+        with patch.object(native, "validate_process_pair", return_value=((999, 998, os.getuid(), "changed"),)):
+            with self.assertRaises(native.BridgeError) as result:
+                bridge.reply(self.session, TEXT)
+        self.assertEqual(result.exception.code, "ECHANGED")
+        self.assertFalse(result.exception.uncertain)
+        self.assertEqual(self.reply_count(), 0)
+
     def test_no_native_files_are_changed_and_bridge_is_single_attempt(self):
         before = {p.relative_to(self.config): p.read_bytes() for p in self.config.rglob("*") if p.is_file()}
         bridge = self.bridge()

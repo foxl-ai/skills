@@ -267,6 +267,12 @@ class Outbox:
                        row.get("config_sha256") == config_hash), key=lambda row: row.get("created", 0))
 
     def view(self, session):
+        if os.name != "posix" or fcntl is None:
+            return {"id": session["id"], "sessionId": session.get("sessionId"),
+                    "items": [], "legacy": [], "watcher_running": False,
+                    "automatic_replay": False, "native_queue_depth": None,
+                    "observed": False, "supported": False,
+                    "note": "Native reply receipts require POSIX. Use the agents UI for follow-ups."}
         legacy = self.legacy()
         _, _, related = self.lineage(legacy, session["id"])
         history = []

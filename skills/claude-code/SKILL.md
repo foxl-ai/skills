@@ -55,7 +55,9 @@ helper deduplicates identical text for that canonical session. To intentionally
 repeat identical text later, use a new key only for a genuinely new user request.
 Never change keys to evade an `unknown` outcome.
 
-Native `send` is an **unsupported private bridge**, not an official CLI command.
+Native `send` is an **unsupported private POSIX bridge**, not an official CLI command.
+On Windows use the agents UI for replies. Spawn, list, status and stop remain
+normal CLI operations there; no POSIX process probes or receipt writes run.
 The exact reviewed Toolbox CLI builds are `2.1.308.1355` and `2.1.309.1365`.
 Reviewed supervisors are `2.1.308` and `2.1.309`, protocol 1. The target worker
 must match its supervisor. CLI/supervisor upgrade skew is allowed only inside
@@ -70,6 +72,9 @@ safe-boundary queue request for the same ID. Say **"queued in the existing
 session"**, not "Claude has read it". Native scheduling may combine messages in
 one turn. There is no guaranteed queue position, one-turn-per-message rule, or
 consumption acknowledgement. `observed: false` explicitly means unverified.
+The bridge queues ordinary prompt text. It does not answer permission dialogs,
+select a structured question's choice, or execute `/model`, `/stop` and other
+slash commands. Use the agents peek panel or attach for those interactions.
 
 `rejected`/`refused` (exit 4) means it was not accepted. `unknown` (exit 5) means
 it may have arrived. The helper saves an unknown receipt **before sending**,
