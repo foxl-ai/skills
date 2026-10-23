@@ -1,0 +1,34 @@
+{
+  "skill_name": "claude-code",
+  "evaluation_mode": "offline routing and safety assertions, no model or production sessions",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "The login regression session abcdef12 is still running. Tell it to add the Safari regression test too, but don't interrupt it or start another session.",
+      "expected_output": "Resolve and validate existing abcdef12, use native send with a stable request ID. Report accepted/queued but not observed. No stop, resume, spawn, wrapper bypass, or promise of one separate turn.",
+      "files": [],
+      "offline_test": "test_working_and_idle_use_same_id_without_stop_or_resume",
+      "route": ["send", "abcdef12", "Add the Safari regression test too.", "--request-id", "eval-follow-up-1"],
+      "expect": {"exit": 0, "created_new": false, "id": "abcdef12", "accepted": true, "queued": true, "observed": false}
+    },
+    {
+      "id": 2,
+      "prompt": "Have Claude start a separate task in the project folder I just confirmed. Add a health endpoint, test it, and leave the changes on its own branch. Don't change the running login task.",
+      "expected_output": "Use spawn (start alias acceptable) for the new task in the confirmed folder, preserve worktree and permission defaults, and report the new ID/branch. Do not send this as a follow-up to login.",
+      "files": [],
+      "offline_test": "test_spawn_and_start_are_the_only_new_session_paths",
+      "route": ["spawn", "--cwd", "<isolated-project>", "--name", "health endpoint", "--", "Add and test a health endpoint. Leave changes on the isolated branch."],
+      "expect": {"exit": 0, "created_new": true, "id": "fedcba98"}
+    },
+    {
+      "id": 3,
+      "prompt": "The last follow-up to abcdef12 timed out. Can you make sure it got there? Please don't create another copy or accidentally send the same instruction twice.",
+      "expected_output": "Read receipt/status, preserve the same request key. An unknown outcome stays unknown and never automatically resends; inspect the exact session and offer Space-peek agents guidance. Unsupported builds also fail closed without changing versions or restarting daemon.",
+      "files": [],
+      "offline_test": "test_unknown_timeout_drop_and_unrecognized_ack_are_never_retried",
+      "route": ["send", "abcdef12", "Add the Safari regression test too.", "--request-id", "eval-uncertain-1"],
+      "fixture": "unknown receipt already reserved",
+      "expect": {"exit": 5, "created_new": false, "status": "unknown", "duplicate_suppressed": true, "reply_attempts": 0}
+    }
+  ]
+}
