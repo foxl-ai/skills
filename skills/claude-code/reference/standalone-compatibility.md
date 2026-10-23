@@ -73,11 +73,23 @@ config, socket hashing, missing/wrong auth and strict capability refusal. They
 never run an installed Claude executable, access real credentials or contact a
 model. A successful fixture or `doctor` does not prove native consumption.
 
-Native `2.1.300` live consumption still requires operator-owned evidence. The
-existing `2.1.309` Toolbox canary evidence is separate and must not be generalized
-to a standalone build or another provider. Record actual native CLI and supervisor
-versions, initial IDs/count, worker/REPL PIDs, auth provider, busy/idle receipt and
-transcript observations, dedupe and final IDs/count before making a live claim.
+Native `2.1.300` live consumption was verified on 2026-10-23 using its standalone
+executable, a separate private HOME/config/supervisor and the user's normal
+Bedrock provider credentials without copying secrets. The CLI, supervisor and
+worker reported `2.1.300`. A working/busy canary accepted an ordinary reply, then
+consumed exactly one queued-command attachment and emitted the requested marker
+once. Repeating the same request key was suppressed. An idle follow-up and its
+repeated key also yielded one marker response. The short ID, full session UUID
+and REPL PID stayed unchanged, with exactly one session in the isolated config.
+The only tool work was a foreground sleep. No production session was messaged,
+restarted or stopped, and no installed binary, auth configuration or local Foxl
+skill was changed. This verifies this native version/provider combination, not
+a Claude subscription login or arbitrary other standalone builds.
+
+The separate `2.1.293` canary started successfully through its native executable.
+Its actual read-only ping returned protocol 1 but no `carriedPromptsFormat`,
+confirming the static reason for refusal. No helper reply was sent through that
+unsupported transport. Its own interactive agents UI is not judged by this test.
 
 For an explicitly authorized standalone canary, select the binary with
 `CLAUDE_BIN`; do not change the user's PATH or installed Foxl skill. Keep all

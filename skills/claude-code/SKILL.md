@@ -69,8 +69,10 @@ Native `2.1.293` is deliberately refused: its `nextTurn` field alone is insuffic
 since its ping lacks the required queue-format capability. Adjacent versions,
 suffixed builds, absent daemons, unsafe paths, auth failures and unavailable/stopped
 targets fail closed. Do not restart the daemon or downgrade security to make a
-send work. Run `doctor` to diagnose. Standalone static review and offline tests do
-not prove live consumption; see `reference/standalone-compatibility.md`.
+send work. Run `doctor` to diagnose. Native `2.1.300` busy/idle delivery and retry
+suppression were live-tested with an isolated same-version supervisor and Bedrock
+auth. That does not establish other versions/providers. See
+`reference/standalone-compatibility.md` for scope and evidence.
 
 ## What to report
 
