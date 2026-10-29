@@ -41,18 +41,18 @@ class NativeCompatibilityTests(IsolatedCase):
                 self.assertEqual(error.exception.code, "EVERSION")
         self.assertEqual(self.server.calls, [])
 
-    def test_reviewed_allowlists_match_documented_contract(self):
+    def test_structural_contract_is_documented_without_numeric_allowlists(self):
         contract = json.loads((SCRIPTS.parent / "reference/native-reply-contract.json").read_text())
-        self.assertEqual(native.CLI_VERSIONS, set(contract["configured_cli_builds"]))
-        self.assertEqual(native.DAEMON_VERSIONS, set(contract["supervisor_versions"]))
-        self.assertIn("2.1.300", native.CLI_VERSIONS)
-        self.assertNotIn("2.1.293", native.CLI_VERSIONS)
-        self.assertNotIn("2.1.293", native.DAEMON_VERSIONS)
+        self.assertFalse(hasattr(native, "CLI_VERSIONS"))
+        self.assertFalse(hasattr(native, "DAEMON_VERSIONS"))
+        self.assertEqual(contract["structural_contracts"][0]["id"], "queue-v1-structural-1")
+        self.assertEqual(set(contract["structural_contracts"][0]["sha256"]),
+                         {"supervisor_reply", "worker_handoff", "worker_receive"})
 
-    def test_all_reviewed_cli_supervisor_pairs_require_matching_worker(self):
-        for cli in sorted(native.CLI_VERSIONS):
+    def test_historical_and_future_cli_supervisor_pairs_require_matching_worker(self):
+        for cli in ("2.1.300", "2.1.308.1355", "2.1.310.1371", "2.1.312.1459", "9.4.2000.9100"):
             (self.root / "version.txt").write_text(cli + " (Claude Code)")
-            for daemon in sorted(native.DAEMON_VERSIONS):
+            for daemon in ("2.1.300", "2.1.309", "2.1.310", "2.1.312", "9.4.2000"):
                 with self.subTest(cli=cli, daemon=daemon):
                     self.server.version = daemon
                     self.server.jobs[0]["cliVersion"] = daemon
@@ -67,19 +67,18 @@ class NativeCompatibilityTests(IsolatedCase):
         self.assertFalse(self.state.exists())
         self.assertEqual(self.reply_count(), 0)
 
-    def test_293_precise_refusal_before_any_socket_exchange(self):
+    def test_293_precise_capability_refusal_before_auth_or_reply(self):
         (self.root / "version.txt").write_text("2.1.293 (Claude Code)")
         self.server.version = "2.1.293"
         self.server.carried_prompts_format = None
         for args in (("doctor", "--json"), ("send", SID, TEXT)):
-            with self.subTest(command=args[0]):
+            with self.subTest(command=args[0]), patch.object(native.NativeReply, "_auth", side_effect=AssertionError):
                 code, report = self.call(*args)
                 self.assertEqual(code, 4)
-                self.assertEqual(report["error_code"], "EVERSION")
+                self.assertEqual(report["error_code"], "EPROTO")
                 self.assertIn("carriedPromptsFormat=1", report["note"])
-                self.assertIn("2.1.293", report["note"])
                 self.assertFalse(report["accepted"])
-        self.assertEqual(self.server.calls, [])
+        self.assertTrue(all(call["op"] == "ping" for call in self.server.calls))
         self.assertTrue(all(args[:1] in (["agents"], ["--version"]) for args in self.cli_calls()))
 
     def test_missing_or_changed_queue_capability_is_not_inferred_from_version(self):
@@ -93,14 +92,15 @@ class NativeCompatibilityTests(IsolatedCase):
                 self.assertFalse(report["accepted"])
         self.assertEqual(self.reply_count(), 0)
 
-    def test_unreviewed_adjacent_native_versions_fail_closed(self):
-        for version in ("2.1.299", "2.1.301", "2.1.300.1", "2.1.308", "2.1.309"):
+    def test_adjacent_native_cli_numbers_are_not_a_compatibility_gate(self):
+        for version in ("2.1.299", "2.1.301", "2.1.300.1", "2.1.308", "2.1.309", "12.8.9000"):
             with self.subTest(version=version):
                 (self.root / "version.txt").write_text(version + " (Claude Code)")
                 code, report = self.call("doctor", "--json")
-                self.assertEqual(code, 4)
-                self.assertEqual(report["error_code"], "EVERSION")
-        self.assertEqual(self.server.calls, [])
+                self.assertEqual(code, 0)
+                self.assertEqual(report["cli_version"], version)
+                self.assertEqual(report["compatibility"], "negotiated-and-structurally-attested")
+        self.assertEqual(self.reply_count(), 0)
 
     def test_native_subprocess_busy_idle_dedupe_and_process_identity(self):
         self.configure_native()
@@ -171,7 +171,7 @@ class NativeCompatibilityTests(IsolatedCase):
                 patch.object(native.socket, "socket", side_effect=AssertionError("no endpoint")):
             code, report = self.call("doctor", "--json")
         self.assertEqual(code, 4)
-        self.assertEqual(report["error_code"], "ETRANSPORT")
+        self.assertEqual(report["error_code"], "ENODAEMON")
         self.assertFalse(report["accepted"])
         self.assertEqual(list(clean.iterdir()), [])
         self.assertFalse(self.state.exists())

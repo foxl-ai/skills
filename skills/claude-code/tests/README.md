@@ -3,8 +3,8 @@
 Run from the repository root:
 
 ```bash
-python3 -m unittest discover -s skills/claude-code/tests -v
-python3 -m py_compile skills/claude-code/scripts/cc_sessions.py skills/claude-code/scripts/cc_native_reply.py skills/claude-code/scripts/cc_outbox.py
+python3 -B -m unittest discover -s skills/claude-code/tests -v
+python3 -B -c 'import ast, pathlib; [ast.parse(p.read_text()) for p in pathlib.Path("skills/claude-code/scripts").glob("*.py")]'
 ```
 
 The suite uses a temporary fake configured CLI plus a real temporary Unix socket,
@@ -12,24 +12,32 @@ strict local permissions and kernel peer checks. It never uses a model, the real
 Claude CLI, a user's credential, session, or native registry. Fixture subprocesses
 receive isolated CLI/config/state paths. No global cwd mutation is used.
 
-The three realistic prompts in `../evals/evals.json` have deterministic command
-routing expectations. `EvalTests` executes those routes against fixtures. This
-validates helper behavior, not whether a language model chooses the correct tool.
+The realistic prompts in `../evals/evals.json` have deterministic command routing
+expectations. `EvalTests` executes those routes against fixtures. This validates
+helper behavior, not whether a language model chooses the correct tool.
 
-`test_native_compatibility.py` adds exact native `2.1.300 (Claude Code)` version
-output, strict build suffix rejection, reviewed CLI/supervisor combinations,
-matching-worker enforcement, isolated subprocess busy/idle sends with a real
-fixture parent/child pair, receipt dedupe, unknown-outcome suppression, fresh
-config refusal, config-derived socket hashing, auth failures, and the explicit
-`2.1.293` refusal for its missing queue-format capability. These are still fake
-CLI/supervisor tests, not real Claude/model tests. See
-`../reference/standalone-compatibility.md` for the static review and separate
-operator-owned standalone canary procedure.
+`test_native_compatibility.py` retains standalone output, auth, socket hashing,
+process-pair and no-daemon regressions. `test_toolbox_310.py` preserves the installed
+310 regressions; assertions about numeric allowlists are now capability checks.
+`test_capability_gate.py` adds future versions, CLI/supervisor skew, worker skew,
+malformed negotiation, insufficient structural evidence, changed UUID/process/image,
+unknown receipts across upgrades, platform negatives and conservative lexer tests.
+The tiny independently written syntax fixtures are not vendor source excerpts.
+
+Transport tests still exercise real private Unix sockets, kernel peer/image lookup,
+process UID/start times and safe file checks. Since the test supervisor is Python,
+`fixture_attestation.py` substitutes only its image fingerprint and refuses any
+image other than that test interpreter. It is not imported by production and
+cannot be enabled through a production environment variable. Subprocess tests use
+`isolated_runner.py`, which first requires CLI/config/state/socket fixture roots.
+Use `-B` when testing a read-only installed baseline. Host overload can exhaust the
+intentionally short timeout case; do not change production timeouts to hide it.
+See `../reference/compatibility.md` for supported proof limits.
 
 ## Contract and operational limits
 
 `../reference/native-reply-contract.json` records only independently described
-wire shapes and exact reviewed versions. It contains no vendor implementation,
+wire shapes, structural hashes and historical evidence. It contains no vendor implementation,
 secret, native session ID, prompt history or user path.
 
 Every follow-up uses a read-only CLI lookup plus supervisor ping/list to verify
@@ -79,5 +87,10 @@ configured wrapper or fabricate a new trust grant to run this optional test.
    an unrelated worktree as part of the test. Capture scrubbed counts/versions,
    not credentials or other sessions' histories.
 
-Unsupported builds/skew must produce a refusal with Space-peek agents UI guidance.
+Incompatible structures/protocols or worker skew must produce a refusal with
+Space-peek agents UI guidance, not a request to blindly allow a new build.
 Fake tests and a read-only `doctor` are not evidence of live message consumption.
+If authorization is limited to one existing smoke session, do not run the optional
+create/busy/idle/stop sequence above. Use only its exact UUID and one authorized
+harmless follow-up, keep the normal state directory, and re-read the same receipt
+key to verify suppression. Inspect only that session's transcript for consumption.

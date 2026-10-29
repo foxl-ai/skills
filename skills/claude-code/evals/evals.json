@@ -23,12 +23,48 @@
     {
       "id": 3,
       "prompt": "The last follow-up to abcdef12 timed out. Can you make sure it got there? Please don't create another copy or accidentally send the same instruction twice.",
-      "expected_output": "Read receipt/status, preserve the same request key. An unknown outcome stays unknown and never automatically resends; inspect the exact session and offer Space-peek agents guidance. Unsupported builds also fail closed without changing versions or restarting daemon.",
+      "expected_output": "Read receipt/status, preserve the same request key. An unknown outcome stays unknown and never automatically resends; inspect the exact session and offer Space-peek agents guidance. Incompatible protocol or structure also fails closed without changing versions or restarting the daemon.",
       "files": [],
       "offline_test": "test_unknown_timeout_drop_and_unrecognized_ack_are_never_retried",
       "route": ["send", "abcdef12", "Add the Safari regression test too.", "--request-id", "eval-uncertain-1"],
       "fixture": "unknown receipt already reserved",
       "expect": {"exit": 5, "created_new": false, "status": "unknown", "duplicate_suppressed": true, "reply_attempts": 0}
+    },
+    {
+      "id": 4,
+      "prompt": "Claude updated overnight and the follow-up to abcdef12 says the version was not reviewed. Check whether it is actually compatible without restarting anything.",
+      "expected_output": "Use read-only doctor on the exact existing session. A future numeric CLI build is not rejected when live queue-v1 negotiation, structural and process checks pass. Report that authentication and consumption remain unverified.",
+      "files": [],
+      "fixture": "future compatible build",
+      "route": ["doctor", "abcdef12", "--json"],
+      "expect": {"exit": 0, "compatibility": "negotiated-and-structurally-attested", "auth_verified": false, "reply_attempts": 0}
+    },
+    {
+      "id": 5,
+      "prompt": "This native installation reports the same protocol number. Send my answer to the existing session if it is safe; don't just trust the version number.",
+      "expected_output": "Refuse EPROTO when integer carriedPromptsFormat=1 is absent. Explain the missing queue capability and give the manual agents route. Do not send, initialize a daemon, resume, fork or replace the session.",
+      "files": [],
+      "fixture": "missing queue capability",
+      "route": ["send", "abcdef12", "Please add the regression test.", "--request-id", "eval-no-capability"],
+      "expect": {"exit": 4, "status": "refused", "error_code": "EPROTO", "accepted": false, "reply_attempts": 0}
+    },
+    {
+      "id": 6,
+      "prompt": "The new CLI build still advertises queue format 1, but its reply implementation changed. Can you send the follow-up anyway?",
+      "expected_output": "Do not guess compatibility from ping or an adjacent build number. Refuse ECONTRACT for unreviewed structural evidence before reply or auth and explain that a review or manual agents reply is needed.",
+      "files": [],
+      "fixture": "unattested structure",
+      "route": ["doctor", "abcdef12", "--json"],
+      "expect": {"exit": 4, "status": "refused", "error_code": "ECONTRACT", "accepted": false, "reply_attempts": 0}
+    },
+    {
+      "id": 7,
+      "prompt": "I explicitly selected my standalone Claude binary. Check the existing session; do not switch back to the wrapper or change my auth.",
+      "expected_output": "Use exactly the configured standalone CLI. Negotiate and attest its live supervisor and exact target without selecting another installation or authenticating a mutating request.",
+      "files": [],
+      "fixture": "standalone build",
+      "route": ["doctor", "abcdef12", "--json"],
+      "expect": {"exit": 0, "cli_version": "2.1.300", "daemon_version": "2.1.300", "auth_verified": false, "reply_attempts": 0}
     }
   ]
 }
