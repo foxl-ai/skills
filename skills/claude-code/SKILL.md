@@ -28,7 +28,7 @@ existing trust confirmation. Do not bypass trust or permission prompts.
 |---|---|
 | `spawn --cwd DIR [--name N] -- TASK` | Create a **new** background session. `start` is an alias. Default: an isolated worktree/branch in git projects. |
 | `send ID\|NAME MESSAGE [--request-id KEY]` | Queue a follow-up into the **same existing native session**, working or idle. Never stop, resume, fork or create a replacement. |
-| `doctor [ID\|NAME] --json` | Read-only bridge/version/ownership probe. With a target, validate its exact identity and worker build too. Never starts a daemon. |
+| `doctor [ID\|NAME] --json` | Read-only protocol, structural compatibility and ownership probe. With a target, validate its exact identity and worker image too. Never starts a daemon. |
 | `list [--all] [--json]` | Show sessions, blocked first. Include finished sessions with `--all`. |
 | `status ID\|NAME [--json]` | Read progress, recent tools, last message, branch/commits/PR and send receipts. |
 | `queue ID\|NAME [--json]` | Read send receipts and retired legacy queue history. Not the native queue depth. |
@@ -61,18 +61,19 @@ Never change keys to evade an `unknown` outcome.
 Native `send` is an **unsupported private POSIX bridge**, not an official CLI command.
 On Windows use the agents UI for replies. Spawn, list, status and stop remain
 normal CLI operations there; no POSIX process probes or receipt writes run.
-The exact reviewed CLI builds are native `2.1.300` and Toolbox `2.1.308.1355` /
-`2.1.309.1365`. Reviewed supervisors are `2.1.300`, `2.1.308` and `2.1.309`, with
-protocol 1 and `carriedPromptsFormat: 1`. The target worker must match its
-supervisor. CLI/supervisor upgrade skew is allowed only inside that reviewed set.
-Native `2.1.293` is deliberately refused: its `nextTurn` field alone is insufficient,
-since its ping lacks the required queue-format capability. Adjacent versions,
-suffixed builds, absent daemons, unsafe paths, auth failures and unavailable/stopped
-targets fail closed. Do not restart the daemon or downgrade security to make a
-send work. Run `doctor` to diagnose. Native `2.1.300` busy/idle delivery and retry
-suppression were live-tested with an isolated same-version supervisor and Bedrock
-auth. That does not establish other versions/providers. See
-`reference/standalone-compatibility.md` for scope and evidence.
+A new CLI patch/build number is not a reason to stop. Run `doctor` to check the
+actual capability: integer protocol 1, `carriedPromptsFormat: 1`, and reviewed
+reply/handoff/receiver structure in the live supervisor's kernel-identified image.
+The worker and REPL must use that same image and match the supervisor version.
+CLI/supervisor version skew is informational when those checks pass; worker skew
+is refused. The bridge never automatically learns or approves a new structure.
+Missing/ambiguous structure, missing queue capability (including native `2.1.293`),
+unsafe paths/ownership, auth failures and unavailable/stopped targets fail closed.
+Do not restart the daemon, edit a fingerprint, or downgrade security to make a
+send work. `EPROTO` explains negotiation failures, `ECONTRACT` structural/process
+mismatches, and `ENODAEMON` an absent endpoint. Use the manual route below if
+blocked. See `reference/compatibility.md` for proof limits and review procedure;
+`reference/standalone-compatibility.md` retains the earlier standalone evidence.
 
 ## What to report
 

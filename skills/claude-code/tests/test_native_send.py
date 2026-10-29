@@ -26,6 +26,8 @@ sys.path.insert(0, str(SCRIPTS))
 import cc_native_reply as native
 import cc_outbox as outbox
 import cc_sessions as helper
+import cc_contract
+from fixture_attestation import attest_python
 
 SID = "abcdef12"
 UUID = "12345678-1234-5678-9abc-123456789abc"
@@ -147,7 +149,8 @@ class IsolatedCase(unittest.TestCase):
         self.env.start()
         self.patches = [patch.object(helper, "CLAUDE", str(self.cli)),
                         patch.object(helper, "CONFIG", str(self.config)), patch.object(helper, "STATE", str(self.state)),
-                        patch.object(helper, "NativeReply", self.bridge)]
+                        patch.object(helper, "NativeReply", self.bridge),
+                        patch.object(cc_contract, "attest_image", attest_python)]
         for item in self.patches:
             item.start()
 
@@ -160,7 +163,10 @@ class IsolatedCase(unittest.TestCase):
         self.tmp.cleanup()
 
     def bridge(self, config=None, version="2.1.309.1365", **kwargs):
-        return native.NativeReply(config or str(self.config), version, timeout=0.1,
+        # Real ps/kernel checks can exceed 100 ms on a loaded host. Keep the
+        # deliberately slow-response case short without loosening production.
+        timeout = 0.1 if self.server.mode == "timeout" else 2.0
+        return native.NativeReply(config or str(self.config), version, timeout=timeout,
                                   temp_root=self.root / "sockets", **kwargs)
 
     def set_sessions(self, rows):
@@ -508,14 +514,14 @@ class TransportTests(IsolatedCase):
         self.assertTrue(all(call["op"] in ("ping", "list") for call in self.server.calls))
         self.assertFalse(self.state.exists())
 
-    def test_unknown_cli_daemon_and_protocol_fail_closed(self):
-        (self.root / "version.txt").write_text("claude 2.1.301")
+    def test_malformed_versions_and_incompatible_protocol_fail_closed(self):
+        (self.root / "version.txt").write_text("claude 2.1.301-custom")
         code, result = self.call("send", SID, TEXT)
         self.assertEqual(result["error_code"], "EVERSION")
         (self.root / "version.txt").write_text("claude 2.1.309.1365")
-        self.server.version = "2.1.999"
+        self.server.version = "2.1.999-custom"
         code, result = self.call("send", SID, TEXT)
-        self.assertEqual(result["error_code"], "EVERSION")
+        self.assertEqual(result["error_code"], "EPROTO")
         self.server.version = "2.1.308"
         self.server.proto = 2
         code, result = self.call("send", SID, TEXT)
@@ -581,9 +587,9 @@ class TransportTests(IsolatedCase):
 
 
 class EvalTests(IsolatedCase):
-    def test_three_realistic_prompts_route_deterministically(self):
+    def test_realistic_prompts_route_deterministically(self):
         spec = json.loads((SCRIPTS.parent / "evals/evals.json").read_text())
-        self.assertEqual(len(spec["evals"]), 3)
+        self.assertGreaterEqual(len(spec["evals"]), 7)
         project = self.root / "eval-project"
         subprocess.run(["git", "init", "--quiet", str(project)], check=True)
         for case in spec["evals"]:
@@ -594,8 +600,17 @@ class EvalTests(IsolatedCase):
                     with box.mutation_guard():
                         path, receipt = box.request(self.session, route[2], route[4])
                         outbox.atomic_save(path, receipt)
+                fixture = case.get("fixture")
+                self.server.carried_prompts_format = None if fixture == "missing queue capability" else 1
+                if fixture in ("future compatible build", "standalone build"):
+                    version = "9.4.2000" if fixture == "future compatible build" else "2.1.300"
+                    (self.root / "version.txt").write_text(version + " (Claude Code)")
+                    self.server.version = self.server.jobs[0]["cliVersion"] = version
                 before = self.reply_count()
-                code, result = self.call(*route)
+                attestor = patch.object(cc_contract, "attest_image", side_effect=cc_contract.ContractError("changed structure")) \
+                    if fixture == "unattested structure" else patch.object(cc_contract, "attest_image", attest_python)
+                with attestor:
+                    code, result = self.call(*route)
                 for key, value in case["expect"].items():
                     if key == "exit":
                         self.assertEqual(code, value)

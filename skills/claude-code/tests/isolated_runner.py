@@ -13,6 +13,10 @@ if Path(os.environ["CLAUDE_BIN"]).name != "fake-claude":
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import cc_native_reply
 import cc_sessions
+import cc_contract
+from fixture_attestation import attest_python
+
+cc_contract.attest_image = attest_python
 
 
 def bridge(config, version):

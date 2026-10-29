@@ -16,15 +16,13 @@ import subprocess
 import sys
 import time
 
+from cc_contract import ContractError, ProcessAttestation
+
 PROTOCOL = 1
-# Exact reviewed builds only. Native and Toolbox distributions share this wire
-# contract, not necessarily their version strings. Never infer support by range.
-CLI_VERSIONS = frozenset({"2.1.300", "2.1.308.1355", "2.1.309.1365"})
-DAEMON_VERSIONS = frozenset({"2.1.300", "2.1.308", "2.1.309"})
-UNSUPPORTED_CLI = {
-    "2.1.293": "Claude Code 2.1.293 lacks the required carriedPromptsFormat=1 supervisor capability. "
-                 "Its nextTurn field alone is not sufficient for this bridge.",
-}
+QUEUE_FORMAT = 1
+# Version syntax is diagnostic only. Compatibility is negotiated and attested
+# against the live supervisor image, never inferred from patch/build numbers.
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?\Z")
 SHORT_ID = re.compile(r"[0-9a-f]{8}\Z")
 SESSION_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 MAX_REPLY = 64 * 1024
@@ -133,9 +131,10 @@ class NativeReply:
     def __init__(self, config, cli_version, timeout=3.0, temp_root=None):
         if os.name != "posix" or not hasattr(os, "getuid") or os.getuid() != os.geteuid():
             reject("EPLATFORM", "Native reply requires a non-setuid POSIX process.")
-        if cli_version not in CLI_VERSIONS:
-            reject("EVERSION", UNSUPPORTED_CLI.get(cli_version,
-                   "This configured Claude CLI version has not been reviewed for native reply."))
+        if not isinstance(cli_version, str) or len(cli_version) > 80 or not VERSION.fullmatch(cli_version):
+            reject("EVERSION", "Cannot identify the configured CLI version without truncating or guessing.")
+        if not (sys.platform == "darwin" or sys.platform.startswith("linux")):
+            reject("EPLATFORM", "Verified process/socket identity is supported only on macOS and Linux.")
         self.config = Path(os.path.abspath(os.path.expanduser(config)))
         self.cli_version = cli_version
         self.timeout = max(0.05, min(float(timeout), 10.0))
@@ -150,6 +149,18 @@ class NativeReply:
         self._prepared = None
         self._worker_pid = None
         self._process_pair = None
+        self._attestation = ProcessAttestation()
+        self._contract_id = None
+
+    def _attest(self, worker=None, repl=None):
+        try:
+            self._contract_id = self._attestation.supervisor(self.peer[1])
+            if worker is not None:
+                self._attestation.worker(worker, repl)
+        except ContractError as exc:
+            reject("ECONTRACT", "Cannot establish queue-v1 process/structural compatibility: " + str(exc))
+        except (OSError, ValueError, KeyError, TypeError, RecursionError):
+            reject("ECONTRACT", "The live process image or structural contract is unavailable or malformed.")
 
     def _validate_path(self):
         safe_ancestors(self.config)
@@ -195,6 +206,12 @@ class NativeReply:
                     reject("ECHANGED", "The supervisor peer changed during this request.")
                 self.peer = identity
                 self._validate_path()
+                if mutating:
+                    # Pin the kernel process image right before the first reply
+                    # byte, not just at an earlier successful doctor probe.
+                    self._attest(self._worker_pid, self._prepared[2])
+                    if validate_process_pair(self._worker_pid, self._prepared[2]) != self._process_pair:
+                        reject("ECHANGED", "The worker/REPL changed before the reply write. No reply was sent.")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError()
@@ -225,6 +242,9 @@ class NativeReply:
             if attempted:
                 exc.uncertain = True
             raise
+        except (FileNotFoundError, ConnectionRefusedError):
+            raise BridgeError("ENODAEMON", "No reachable supervisor at the normal configured endpoint. Nothing was started.",
+                              uncertain=attempted) from None
         except (OSError, ValueError, UnicodeError, ConnectionError, RecursionError):
             # Never echo server errors, auth, raw frames, prompts, or exception buffers.
             raise BridgeError("ETRANSPORT", "The local supervisor exchange failed or timed out.",
@@ -232,15 +252,19 @@ class NativeReply:
 
     def probe(self):
         reply = self._rpc({"proto": PROTOCOL, "op": "ping"})
-        if (reply.get("ok") is not True or reply.get("op") != "ping" or
-                type(reply.get("proto")) is not int or reply["proto"] != PROTOCOL or
-                type(reply.get("carriedPromptsFormat")) is not int or reply["carriedPromptsFormat"] != 1):
-            reject("EPROTO", "The supervisor protocol/queue format is not supported.")
-        if not isinstance(reply.get("version"), str) or reply["version"] not in DAEMON_VERSIONS:
-            reject("EVERSION", "The running supervisor version has not been reviewed.")
+        if reply.get("ok") is not True or reply.get("op") != "ping":
+            reject("EPROTO", "The supervisor did not acknowledge the read-only ping operation.")
+        if type(reply.get("proto")) is not int or reply["proto"] != PROTOCOL:
+            reject("EPROTO", "The supervisor must explicitly negotiate integer protocol 1.")
+        if type(reply.get("carriedPromptsFormat")) is not int or reply["carriedPromptsFormat"] != QUEUE_FORMAT:
+            reject("EPROTO", "The supervisor must advertise integer carriedPromptsFormat=1; nextTurn alone is insufficient.")
+        if (not isinstance(reply.get("version"), str) or len(reply["version"]) > 80 or
+                not VERSION.fullmatch(reply["version"])):
+            reject("EPROTO", "The supervisor supplied a missing, malformed or ambiguous version identity.")
         if self.daemon_version is not None and self.daemon_version != reply["version"]:
             reject("ECHANGED", "The supervisor version changed during this request.")
         self.daemon_version = reply["version"]
+        self._attest()
         try:
             self._auth()
         except BridgeError:
@@ -248,9 +272,29 @@ class NativeReply:
         except (OSError, UnicodeError):
             reject("EAUTHFILE", "The normal local supervisor control key is unavailable.")
         return {"cli_version": self.cli_version, "daemon_version": self.daemon_version,
-                "protocol": PROTOCOL, "private_bridge": True, "peer_verified": True,
-                "auth_file_valid": True, "auth_verified": False,
-                "note": "Read-only probe. Authentication is verified only by an actual reply."}
+                "protocol": PROTOCOL, "queue_format": QUEUE_FORMAT,
+                "compatibility": "negotiated-and-structurally-attested",
+                "contract": self._contract_id, "private_bridge": True, "peer_verified": True,
+                "process_image_verified": True, "auth_file_valid": True, "auth_verified": False,
+                "cli_daemon_skew": self.cli_version.split(".")[:3] != self.daemon_version.split(".")[:3],
+                "note": "Read-only probe. CLI version is informational; authentication is verified only by an actual reply."}
+
+    def _job(self, session):
+        response = self._rpc({"proto": PROTOCOL, "op": "list"})
+        jobs = response.get("jobs")
+        if response.get("ok") is not True or response.get("op") != "list" or not isinstance(jobs, list):
+            reject("ETARGET", "Cannot validate the target against the running supervisor.")
+        matches = [job for job in jobs if isinstance(job, dict) and job.get("short") == session["id"]]
+        if len(matches) != 1:
+            reject("ETARGET", "The target is missing or ambiguous in the supervisor.")
+        job = matches[0]
+        if (job.get("sessionId") != session["sessionId"] or job.get("backend") != "daemon" or
+                job.get("dying") or job.get("outcome") or job.get("legacy") or
+                job.get("state") not in ("working", "blocked", "done")):
+            reject("ETARGET", "The target identity changed, is unavailable, or is not a native daemon session.")
+        if job.get("cliVersion") != self.daemon_version:
+            reject("ESKEW", "Safe-boundary reply requires the worker and supervisor to report the same version.")
+        return job
 
     def prepare(self, session):
         sid, uuid = session.get("id"), session.get("sessionId")
@@ -261,22 +305,10 @@ class NativeReply:
                 session.get("status") not in ("busy", "waiting", "idle")):
             reject("ETARGET", "The target is not an available canonical local Claude session.")
         self.probe()
-        response = self._rpc({"proto": PROTOCOL, "op": "list"})
-        jobs = response.get("jobs")
-        if response.get("ok") is not True or response.get("op") != "list" or not isinstance(jobs, list):
-            reject("ETARGET", "Cannot validate the target against the running supervisor.")
-        matches = [job for job in jobs if isinstance(job, dict) and job.get("short") == sid]
-        if len(matches) != 1:
-            reject("ETARGET", "The target is missing or ambiguous in the supervisor.")
-        job = matches[0]
-        if (job.get("sessionId") != uuid or job.get("backend") != "daemon" or
-                job.get("dying") or job.get("outcome") or job.get("legacy") or
-                job.get("state") in ("stopped", "failed")):
-            reject("ETARGET", "The target identity changed, is unavailable, or is not a native daemon session.")
-        if job.get("cliVersion") != self.daemon_version:
-            reject("ESKEW", "Safe-boundary reply requires the worker and supervisor to run the same reviewed build.")
+        job = self._job(session)
         self._worker_pid = job.get("pid")
         self._process_pair = validate_process_pair(self._worker_pid, session["pid"])
+        self._attest(self._worker_pid, session["pid"])
         self._prepared = (sid, uuid, session["pid"])
         return {"id": sid, "sessionId": uuid, "worker_version": job["cliVersion"],
                 "daemon_version": self.daemon_version, "protocol": PROTOCOL}
@@ -286,6 +318,13 @@ class NativeReply:
             reject("ETARGET", "Reply target has not passed the read-only identity checks.")
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_REPLY or "\0" in text:
             reject("EMESSAGE", "Reply text must be nonempty UTF-8 without NUL and at most 64 KiB.")
+        if validate_process_pair(self._worker_pid, session["pid"]) != self._process_pair:
+            reject("ECHANGED", "The native worker/REPL changed after preparation. No reply was sent.")
+        # Repeat only read-only negotiation/identity immediately before mutation.
+        # There is deliberately no retry of reply, even after an unknown ACK.
+        self.probe()
+        if self._job(session).get("pid") != self._worker_pid:
+            reject("ECHANGED", "The native target worker changed after preparation.")
         try:
             token = self._auth()
         except BridgeError:

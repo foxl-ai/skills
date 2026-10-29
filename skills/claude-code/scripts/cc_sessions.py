@@ -2,7 +2,7 @@
 """Start, inspect, message and stop Claude Code background sessions.
 
 start/spawn creates a NEW native session through the configured CLI wrapper.
-send uses a version-gated private supervisor bridge to queue into an EXISTING
+send uses a capability-gated private supervisor bridge to queue into an EXISTING
 session. It never stops, resumes, forks or starts a daemon. queue shows receipts,
 not a helper delivery queue. doctor performs only read-only bridge checks.
 
@@ -64,11 +64,10 @@ def need_bg_support():
 
 def cli_version():
     code, out, _ = run([CLAUDE, "--version"], timeout=15)
-    # Native output is "2.1.300 (Claude Code)"; Toolbox includes a fourth build
-    # component. Neither format implies support: NativeReply uses exact allowlists.
-    # Do not accept an unreviewed suffix or a truncated multi-component build.
-    hits = re.findall(r"(?<![\w.+-])\d+\.\d+\.\d+(?:\.\d+)?(?![\w.+-])", out)
-    if code or len(hits) != 1:
+    # Parse one complete version token, not an allowed prefix of an unknown
+    # suffix. Native and Toolbox formats are preserved; digits do not grant send.
+    hits = re.findall(r"(?<![\w.+-])\d+\.\d+\.\d+[\w.+-]*", out)
+    if code or len(hits) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?", hits[0]):
         raise BridgeError("EVERSION", "Cannot identify the configured CLI build safely.")
     return hits[0]
 

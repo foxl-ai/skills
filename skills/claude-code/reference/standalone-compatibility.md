@@ -1,7 +1,11 @@
 # Standalone compatibility review
 
-Reviewed 2026-10-23. This is a private-protocol compatibility record, not an
-Anthropic-supported API or a promise that future versions are compatible.
+Historical review, 2026-10-23. This is a private-protocol compatibility record,
+not an Anthropic-supported API or a promise about future versions. The numeric
+allowlist policy described below was superseded by `compatibility.md` on
+2026-10-28. The original observations and standalone live evidence remain useful;
+current refusal is based on actual queue capability and structural/process checks,
+not a historical version entry. Native 2.1.293 still fails the missing-format check.
 
 ## Decision and minimum change
 
