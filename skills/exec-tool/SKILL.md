@@ -10,7 +10,7 @@ tags: shell, automation, system
 
 ## exec
 
-Runs one command through the system shell (`/bin/sh -c` on macOS and Linux, `cmd.exe` on Windows) and returns stdout/stderr.
+Runs one command through the system shell (`/bin/sh -c` on macOS, bash on Linux where it is installed and `/bin/sh -c` otherwise, `cmd.exe /s /c` with UTF-8 output on Windows) and returns stdout/stderr. The tool's own description names the shell of this computer: write that shell's syntax.
 
 | Parameter | Meaning |
 |---|---|
@@ -31,7 +31,7 @@ Manages background `exec` sessions: `action` is one of `list`, `poll` (status, e
 
 - Long build or test: `exec` with `background: true` and a `timeout` that fits (for example 1800), then `process poll` / `process log` until it exits. Do not sleep-loop inside one foreground command.
 - Dev server: start it in the background, `process log` to read the URL, `process kill` when done.
-- Big output: redirect to a file (`> /tmp/out.log 2>&1`) and read the part you need with `file_read`, or filter with `grep`, `tail`, `head`.
+- Big output: redirect to a file (`> /tmp/out.log 2>&1` on macOS and Linux, `> %TEMP%\out.log 2>&1` on Windows, where there is no `/tmp`) and read the part you need with `file_read`, or filter with `grep`, `tail`, `head` (`findstr`, `more` in cmd).
 - Search code with `code_search` and read files with `file_read`; do not `cat` large files through exec.
 
 ## Safety
