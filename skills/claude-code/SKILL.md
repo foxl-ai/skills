@@ -30,6 +30,7 @@ existing trust confirmation. Do not bypass trust or permission prompts.
 | `send ID\|NAME MESSAGE [--request-id KEY]` | Queue a follow-up into the **same existing native session**, working or idle. Never stop, resume, fork or create a replacement. |
 | `doctor [ID\|NAME] --json` | Read-only protocol, structural compatibility and ownership probe. With a target, validate its exact identity and worker image too. Never starts a daemon. |
 | `list [--all] [--json]` | Show sessions, blocked first. Include finished sessions with `--all`. |
+| `overview [--json]` | ONE read-only snapshot: counts by state, details for working, blocked and still-running sessions (last steps, branch, PR, receipts), what finished in the last day (newest first). Use it for "how are my sessions doing". |
 | `status ID\|NAME [--json]` | Read progress, recent tools, last message, branch/commits/PR and send receipts. |
 | `queue ID\|NAME [--json]` | Read send receipts and retired legacy queue history. Not the native queue depth. |
 | `queue ID\|NAME --clear` | Cancel **legacy pending** messages only. Cannot recall native accepted replies. |
@@ -100,9 +101,11 @@ new work. Never substitute `--resume`, `--bg --resume`, `stop` plus restart,
 `--force`, an extra session, direct edits to Claude's registry/queue, or an auth
 bypass. A stopped session needs an explicit user decision, not automatic revival.
 
-For status reports, names are only handles. Read `status` for each relevant
-working/blocked or newly finished session, then describe its actual content,
-branch/PR and unverified tests. Blocked can mean awaiting review, not a question.
+For status reports, run `overview --json` ONCE and answer from it: the counts,
+then one line per blocked or working session (what it is doing, branch/PR), then
+what finished. Names are only handles. Run `status ID` only for a session the
+person asks about, and read nothing unrelated to the question. `blocked_kind` is
+`question` only when the job recorded one; otherwise it may be awaiting review.
 Report results from transcripts separately from send acknowledgement receipts.
 
 ## Legacy migration and safety

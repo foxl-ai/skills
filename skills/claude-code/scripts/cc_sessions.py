@@ -498,13 +498,22 @@ def main(argv=None):
     wt.add_argument("--timeout", type=int, default=150)
     sp = sub.add_parser("stop")
     sp.add_argument("ref")
+    ov = sub.add_parser("overview", help="ONE read-only snapshot for a status question")
+    ov.add_argument("--json", action="store_true")
+    ov.add_argument("--max-detail", type=int, default=24)
+    ov.add_argument("--max-recent", type=int, default=10)
+    ov.add_argument("--recent-minutes", type=int, default=1440)
+    ov.add_argument("--concurrency", type=int, default=6)
+    ov.add_argument("--detail-timeout", type=float, default=20.0)
+    ov.add_argument("--no-pr", action="store_true")
     a = p.parse_args(argv)
     if a.cmd in ("start", "spawn") and a.prompt[:1] == ["--"]:
         a.prompt = a.prompt[1:]
     try:
         result = {"start": cmd_start, "spawn": cmd_start, "list": cmd_list, "status": cmd_status,
                   "send": cmd_send, "doctor": cmd_doctor, "queue": cmd_queue,
-                  "wait": cmd_wait, "stop": cmd_stop}[a.cmd](a)
+                  "wait": cmd_wait, "stop": cmd_stop,
+                  "overview": lambda x: __import__("cc_overview").cmd_overview(x)}[a.cmd](a)
         return result or 0
     except BridgeError as exc:
         print(json.dumps({"status": "unknown" if exc.uncertain else "refused", "error_code": exc.code,
