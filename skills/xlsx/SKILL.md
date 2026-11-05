@@ -143,11 +143,11 @@ officecli query file.xlsx 'Sheet1!row[Salary>5000]'
 # Formula errors and other problems, mechanically
 officecli view file.xlsx issues --json
 
-# SEE the sheet (PNG needs a headless browser: Playwright/Chrome/Edge/Firefox)
+# SEE the sheet. In Foxl the PNG comes from Foxl's own headless browser: run
+# officecli by its name, and never install a browser or Playwright for it.
 officecli view file.xlsx screenshot -o out/sheet.png
 officecli view file.xlsx screenshot --range "Sheet1!A1:H40" -o out/region.png
 officecli view file.xlsx html -o out/sheet.html
-officecli watch file.xlsx        # live preview at http://localhost:26315
 ```
 
 ### pandas for analysis

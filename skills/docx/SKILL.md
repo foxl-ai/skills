@@ -100,12 +100,9 @@ officecli view document.docx screenshot --grid 4 -o out/contact.png
 # Bigger raster (default 1600x1200)
 officecli view document.docx screenshot --screenshot-width 1920 -o out/page.png
 
-# Static HTML snapshot (assets inlined, single file)
+# Static HTML snapshot (assets inlined, single file; not `officecli watch`,
+# which serves a live preview on a local port)
 officecli view document.docx html -o out/document.html
-
-# Live preview that auto-refreshes on every officecli edit
-officecli watch document.docx        # http://localhost:26315
-officecli unwatch document.docx
 ```
 
 **`screenshot` writes ONE PNG, never a numbered series.** A `--page` range is
@@ -113,10 +110,17 @@ composed into that single image, and `--grid` tiles it. There is no
 `page-01.png, page-02.png` output mode - if you want one file per page, run
 the command once per page with a different `-o`.
 
-PNG capture needs a headless browser on the machine (Playwright / Chrome /
-Edge / Firefox, auto-detected). The renderer itself is built in; only the
-capture step needs the browser. `--render native` (real Word rasterization)
-is Windows-only and errors elsewhere with `native_unavailable`.
+The renderer itself is built in; only the PNG capture needs a headless
+browser. Run `officecli` by its name, never by its path. In Foxl the PNG capture runs
+in Foxl's own headless browser, never one of this computer's (Google Chrome,
+Firefox, Edge): Foxl puts it first on officecli's PATH, and the first
+screenshot waits while Foxl downloads it, once. If officecli answers that no
+headless browser is available, run that screenshot command once more on its
+own; if it still fails, do the visual pass with `view ... issues --json`,
+`outline` and `text`, and say that the screenshot was skipped. Never install
+a browser, Playwright or Chrome to make it work, and never pass `--browser`.
+`--render native` (real Word rasterization) is Windows-only and errors
+elsewhere with `native_unavailable`.
 
 ### Verify Before You Call It Done
 
@@ -1074,8 +1078,8 @@ Adding an image to unpacked XML is four steps:
 ## Dependencies
 
 - **officecli** (primary): reading, rendering, tracked changes, validation; install above.
-- **a headless browser** (Playwright / Chrome / Edge / Firefox): only for
-  `view ... screenshot`; auto-detected.
+- **a headless browser**, only for `view ... screenshot`: in Foxl, Foxl's own
+  (see Rendering). Do not install one.
 - **docx** (npm, local install): creating new documents with docx-js.
 - **python**: `scripts/office/{unpack,pack,validate}.py` for raw-XML editing.
 
