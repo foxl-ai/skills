@@ -278,14 +278,15 @@ officecli view output.pptx screenshot --start 1 --end 4 --grid 2 \
 # Crop to one shape
 officecli view output.pptx screenshot --range '/slide[1]/shape[@id=100000]' -o out/shape.png
 
-# Vector render of a single slide (sharpest for text/equation checks).
+# Vector render of a single slide, for a file someone asked for. Look at
+# slides through `screenshot`: officecli puts the text of an SVG in
+# <foreignObject>, which Foxl's image viewer does not draw.
 # NOTE: svg mode ignores -o and writes to STDOUT - redirect it yourself.
 officecli view output.pptx svg --start 3 --end 3 > out/slide-03.svg
 
-# Static HTML snapshot, or a live auto-refreshing preview
+# Static HTML snapshot (not `officecli watch`: it serves a live preview on a
+# local port)
 officecli view output.pptx html -o out/deck.html
-officecli watch output.pptx        # http://localhost:26315
-officecli unwatch output.pptx
 ```
 
 **`screenshot` writes ONE PNG, never a numbered series.** A `--start/--end`
@@ -307,10 +308,17 @@ done
 ```
 
 `-o` is effectively required: with no `-o`, officecli writes a random temp file
-and prints its path. PNG capture needs a headless browser on the machine
-(Playwright / Chrome / Edge / Firefox, auto-detected); the renderer itself is
-built in. `--render native` (real PowerPoint rasterization) is Windows-only and
-errors elsewhere with `native_unavailable`.
+and prints its path. The renderer is built in; only the PNG capture needs a
+headless browser. Run `officecli` by its name, never by its path. In Foxl the PNG capture runs
+in Foxl's own headless browser, never one of this computer's (Google Chrome,
+Firefox, Edge): Foxl puts it first on officecli's PATH, and the first
+screenshot waits while Foxl downloads it, once. If officecli answers that no
+headless browser is available, run that screenshot command once more on its
+own; if it still fails, do the visual pass with `view ... issues --json`,
+`outline` and `text`, and say that the screenshot was skipped. Never install
+a browser, Playwright or Chrome to make it work, and never pass `--browser`.
+`--render native` (real PowerPoint rasterization) is Windows-only and errors
+elsewhere with `native_unavailable`.
 
 **Flush before a non-officecli program reads the deck.** officecli keeps a
 resident process, so python-pptx / an upload / a validator may otherwise read a
@@ -332,8 +340,8 @@ officecli view output.pptx issues --json   # overflow, missing alt text, contras
 
 - **officecli** (primary): reading, rendering (PNG/SVG/HTML), validation;
   install above.
-- **a headless browser** (Playwright / Chrome / Edge / Firefox): only for
-  `view ... screenshot`; auto-detected.
+- **a headless browser**, only for `view ... screenshot`: in Foxl, Foxl's own
+  (see Rendering). Do not install one.
 - `npm install pptxgenjs` (local, in the working directory) - creating decks
   from scratch; see pptxgenjs.md
 - python 3.10+ with `lxml` - the `scripts/` helpers (`thumbnail.py` also needs
