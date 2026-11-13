@@ -1,7 +1,8 @@
 {
   "status": "unsupported private protocol, not a public API",
   "reviewed_on": "2026-10-29",
-  "compatibility_policy": "No numeric build allowlist. Require live integer protocol=1 and carriedPromptsFormat=1, exact target and worker/supervisor identity, kernel process-image provenance and an independently reviewed structural fingerprint tuple. Version syntax must be unambiguous; worker and supervisor versions still match exactly. Historical version lists below are evidence, not runtime authorization.",
+  "policy_updated_on": "2026-11-13",
+  "compatibility_policy": "No numeric build allowlist and no version-equality gate. Require live integer protocol=1 and carriedPromptsFormat=1, the exact target identity and safe socket/key/executable ownership. CLI, supervisor and worker versions, worker image differences (including a binary deleted by an update) and the structural fingerprint result are reported, never refused by themselves. A same-build worker gets nextTurn=true; a different-build worker gets the agents-UI reply request without nextTurn, because the supervisor refuses nextTurn for other builds. Historical version lists below are evidence, not runtime authorization.",
   "structural_contracts": [
     {
       "id": "queue-v1-structural-1",
@@ -10,29 +11,33 @@
         "worker_handoff": "e1607f2c4d3dc326af021bc9c347de4fa19e1778fca23196504f9658c07252e5",
         "worker_receive": "6e471418117830ad006b5fa242fe37c0847e3c35cbdf00c6546abe238eaa04b0"
       },
-      "observed_equivalence": "The same normalized tuple was observed in native 2.1.300 and 2.1.312, and Toolbox 2.1.311.1423 and 2.1.312.1459 macOS executables. Only hashes, not implementation fragments, are distributed. This is not signature verification or a guarantee about future code outside the inspected handlers."
+      "observed_equivalence": "The same normalized tuple was observed in native 2.1.300 and 2.1.312, and Toolbox 2.1.311.1423 and 2.1.312.1459 macOS executables. Only hashes, not implementation fragments, are distributed. This is not signature verification or a guarantee about future code outside the inspected handlers. On 2026-11-13 the same tuple was also observed in Toolbox 2.1.322.1722 and 2.1.323.1727 macOS executables (read-only check of the live 2.1.323 supervisor image)."
     }
   ],
   "normalization": "Conservative tokenization of exactly one supervisor reply case, worker reply handoff method and next-turn receiver function. Ignore horizontal whitespace and consistently rename minifier-local identifiers. Preserve runtime names, property/shorthand/method names, whole numeric and string literals, control flow and line breaks. Ambiguous object/pattern names are retained. Replace only the known flat build-metadata object used as .VERSION. Reject comments, nested templates, unsupported lexical forms, unbalanced/missing/duplicate/incomplete fragments and changed fingerprints. The 2026-10-29 tightening was rechecked against the same four previously inspected images.",
-  "provenance": "Obtain the peer executable from the kernel (proc_pidpath or /proc/pid/exe), not argv. Inspect only that image, read-only. Pin its safe file identity and supervisor start identity; require the target worker and REPL to use the same image. Recheck before the sole mutating write. No alternate executable search or execution.",
+  "provenance": "Obtain the peer executable from the kernel (proc_pidpath or /proc/pid/exe), not argv. Inspect only that image, read-only. Refuse only foreign ownership or group/world-writable images. Pin process start identity and the image path and file identity (or their absence) for supervisor, worker and REPL; a different or deleted worker image is reported, not refused. Recheck before the sole mutating write; any change is ECHANGED. No alternate executable search or execution.",
   "evidence": "Independent wire-contract inspection of locally installed binaries. No vendor source, secrets or local session content included. Read-only ping/list confirmed against 2.1.308 and 2.1.309. Live 2.1.309 canary confirmed busy and idle delivery, one queued-command attachment for a repeated request key, unchanged short ID/full UUID/REPL PID, and one test-directory session throughout. 2.1.308 reply consumption was not live-tested. Native 2.1.300 was also live-tested with an isolated same-version supervisor and normal Bedrock auth: busy and idle markers consumed once, repeated request keys suppressed, one session with unchanged short ID/full UUID/REPL PID. Native 2.1.293 read-only ping confirmed its missing carriedPromptsFormat capability; no reply attempted. See standalone-compatibility.md for scope and evidence.",
   "live_capability_canary": "2026-10-29: wrapper CLI 2.1.312.1459, supervisor/worker 2.1.312, idle macOS plan-mode no-tool diagnostic. Target doctor passed. One follow-up accepted/queued; unchanged short ID/full UUID returned exact requested marker in transcript. Identical request key suppressed with original receipt and no second send. Normal wrapper/auth/receipt state retained. Original exited smoke left untouched. No work session, daemon restart, resume, registry edit or installed-skill change. This proves only the tested case, not all future builds/states/platforms.",
+  "informational_not_refused": ["cli_version and cli/daemon skew", "worker/supervisor version skew", "suffixed or future version labels", "worker executable differs from or is missing beside the supervisor", "unreviewed, oversized or unreadable reply structure", "new job state names"],
+  "helper_refusals": {"EPROTO": "ping lacks integer proto 1 or carriedPromptsFormat 1, or a missing/garbage version identity", "ETARGET": "wrong UUID, ambiguous, dying, exited, stopped, legacy or non-daemon target", "EPATH/EAUTHFILE/EPEER": "unsafe or foreign socket, control key or executable ownership", "ECHANGED": "socket, peer, supervisor version, worker PID/start/build or pinned image changed mid-request", "ECOMMAND/EMESSAGE/EBLOCKED": "agents-ui-reply route only: leading / or !, terminal control characters, or a pending question/permission/dialog"},
+  "live_skew_canary": "2026-11-13: Toolbox CLI 2.1.323.1727, supervisor 2.1.323. Read-only doctor on a live session with a 2.1.322 worker whose binary had been deleted passed with skew reported and route agents-ui-reply. A throwaway same-build plan-mode canary received one fixed-key message via the forced agents-ui-reply request: accepted, identical key suppressed without a second send, exact marker once in its transcript, no tools. Canary stopped afterwards; no daemon restart, resume, registry or auth change. Busy (bracketed-paste) delivery was not live-tested.",
   "configured_cli_builds": ["2.1.300", "2.1.308.1355", "2.1.309.1365"],
   "supervisor_versions": ["2.1.300", "2.1.308", "2.1.309"],
   "reviewed_but_refused_cli_builds": {
     "2.1.293": "nextTurn exists, but ping does not advertise carriedPromptsFormat. The required format-1 capability check is not weakened or inferred from the version."
   },
-  "worker_requirement": "Worker cliVersion must equal supervisor version for nextTurn=true",
+  "worker_requirement": "The supervisor accepts nextTurn=true only when the job cliVersion equals its own version (else its ESKEW). The helper reports skew and sends a different-build worker the agents-UI request without nextTurn, once; that request is not version-gated by the supervisor.",
   "transport": "Unix stream socket, one UTF-8 JSON request followed by newline, one newline-delimited JSON response per connection",
   "socket_layout": "/tmp/cc-daemon-<effective-user-id>/<first-8-hex-of-sha256-absolute-config-path>/control.sock",
   "authentication": "Normal local control.key from <config>/daemon. Read only, 32 lowercase hexadecimal characters, owned by caller, mode 0600, no links. Never emitted in logs or fixtures.",
   "peer_validation": "Kernel peer UID and PID, same caller UID, pinned socket inode and peer for the operation",
   "process_identity": "Supervisor list.pid is the worker; agents --json pid is its REPL, observed as a direct child on the live 2.1.309 canary. Require both live same-user PIDs, same process or direct parent-child, and recheck the process pair/start times immediately before sending.",
   "ping_request": {"proto": 1, "op": "ping"},
-  "ping_response_shape": {"ok": true, "op": "ping", "version": "reviewed supervisor version", "proto": 1, "carriedPromptsFormat": 1},
+  "ping_response_shape": {"ok": true, "op": "ping", "version": "supervisor version label (informational)", "proto": 1, "carriedPromptsFormat": 1},
   "list_request": {"proto": 1, "op": "list"},
   "list_response_shape": {"ok": true, "op": "list", "jobs": ["records with short, sessionId, pid, backend=daemon, cliVersion, state; no dying or outcome"]},
   "reply_request_shape": {"proto": 1, "op": "reply", "short": "exact canonical 8-hex native ID", "text": "user follow-up", "auth": "local control key, deliberately not included", "nextTurn": true},
+  "agents_ui_reply_request_shape": {"proto": 1, "op": "reply", "short": "exact canonical 8-hex native ID", "text": "ordinary prompt text, no leading / or !, no control characters", "auth": "local control key, deliberately not included"},
   "reply_acknowledgement": {"ok": true, "op": "reply"},
   "known_preaccept_refusals": ["EAUTH", "EPROTO", "ESTARTING", "ERESPAWNING", "ESKEW", "ENOJOB", "ENOREPLY"],
   "limits": {

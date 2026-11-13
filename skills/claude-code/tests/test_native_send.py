@@ -49,6 +49,7 @@ class FakeSupervisor:
         self.sock.settimeout(0.1)
         self.calls = []
         self.error = None
+        self.server_skew_refusals = 0
         self.mode = "ok"
         self.version = "2.1.308"
         self.proto = 1
@@ -89,8 +90,13 @@ class FakeSupervisor:
                     elif op == "list":
                         reply = {"ok": True, "op": op, "jobs": self.jobs}
                     elif op == "reply":
+                        job = next((j for j in self.jobs if j.get("short") == req.get("short")), {})
                         if req.get("auth") != FAKE_KEY:
                             reply = {"ok": False, "code": "EAUTH", "error": "redacted"}
+                        elif req.get("nextTurn") is True and job.get("cliVersion") != self.version:
+                            # Same rule as the real supervisor: next-turn only for its own build.
+                            self.server_skew_refusals += 1
+                            reply = {"ok": False, "code": "ESKEW", "error": "it runs a different Claude Code build"}
                         elif self.mode == "timeout":
                             time.sleep(0.18)
                             continue
@@ -160,7 +166,13 @@ class IsolatedCase(unittest.TestCase):
         self.env.stop()
         self.server.close()
         self.assertIsNone(self.server.error)
+        if self.server.mode != "ESKEW":
+            # The helper must pick the route the supervisor accepts, never hit its skew refusal.
+            self.assertEqual(self.server.server_skew_refusals, 0)
         self.tmp.cleanup()
+
+    def replies(self):
+        return [req for req in self.server.calls if req["op"] == "reply"]
 
     def bridge(self, config=None, version="2.1.309.1365", **kwargs):
         # Real ps/kernel checks can exceed 100 ms on a loaded host. Keep the
@@ -514,32 +526,43 @@ class TransportTests(IsolatedCase):
         self.assertTrue(all(call["op"] in ("ping", "list") for call in self.server.calls))
         self.assertFalse(self.state.exists())
 
-    def test_malformed_versions_and_incompatible_protocol_fail_closed(self):
+    def test_version_labels_are_informational_but_protocol_and_garbage_identity_fail_closed(self):
+        # A suffixed CLI or supervisor build label is a future version, not a refusal.
         (self.root / "version.txt").write_text("claude 2.1.301-custom")
-        code, result = self.call("send", SID, TEXT)
-        self.assertEqual(result["error_code"], "EVERSION")
-        (self.root / "version.txt").write_text("claude 2.1.309.1365")
-        self.server.version = "2.1.999-custom"
-        code, result = self.call("send", SID, TEXT)
-        self.assertEqual(result["error_code"], "EPROTO")
+        self.server.version = self.server.jobs[0]["cliVersion"] = "2.1.999-custom"
+        code, result = self.call("doctor", SID, "--json")
+        self.assertEqual(code, 0)
+        self.assertEqual((result["cli_version"], result["daemon_version"]), ("2.1.301-custom", "2.1.999-custom"))
+        self.assertFalse(result["skew"])
+        # A missing, empty, spaced or oversized supervisor identity is a malformed ping, not a version.
+        for version in (None, "", "2.1 999", "9" * 81):
+            with self.subTest(version=version):
+                self.server.version = version
+                code, result = self.call("send", SID, TEXT)
+                self.assertEqual((code, result["error_code"]), (4, "EPROTO"))
         self.server.version = "2.1.308"
         self.server.proto = 2
         code, result = self.call("send", SID, TEXT)
         self.assertEqual(result["error_code"], "EPROTO")
         self.assertEqual(self.reply_count(), 0)
 
-    def test_unknown_old_skewed_and_stopped_workers_fail_closed(self):
-        for version in ("2.1.300", "2.1.309", "unrecognized"):
-            self.server.jobs[0]["cliVersion"] = version
-            code, result = self.call("send", SID, TEXT)
-            self.assertEqual(code, 4)
-            self.assertEqual(result["error_code"], "ESKEW")
+    def test_unknown_old_and_newer_workers_send_with_skew_but_stopped_fails_closed(self):
+        for index, version in enumerate(("2.1.300", "2.1.309", "unrecognized", None)):
+            with self.subTest(worker=version):
+                self.server.jobs[0]["cliVersion"] = version
+                code, result = self.call("send", SID, TEXT, "--request-id", "skew-%d" % index)
+                self.assertEqual(code, 0, result)
+                self.assertTrue(result["accepted"] and result["skew"])
+                self.assertEqual(result["route"], "agents-ui-reply")
+                self.assertEqual(result["worker_version"], None if version is None else version)
+                self.assertNotIn("nextTurn", self.replies()[-1])
+        self.assertEqual(self.reply_count(), 4)
         self.server.jobs[0]["cliVersion"] = "2.1.308"
         self.session["pid"] = None
         self.session["state"] = "stopped"
         self.set_sessions([self.session])
-        self.assertEqual(self.call("send", SID, TEXT)[0], 4)
-        self.assertEqual(self.reply_count(), 0)
+        self.assertEqual(self.call("send", SID, TEXT, "--request-id", "stopped")[1]["error_code"], "ETARGET")
+        self.assertEqual(self.reply_count(), 4)
 
     def test_duplicate_mismatched_peer_and_exited_targets_fail_closed(self):
         original = dict(self.server.jobs[0])
@@ -602,6 +625,7 @@ class EvalTests(IsolatedCase):
                         outbox.atomic_save(path, receipt)
                 fixture = case.get("fixture")
                 self.server.carried_prompts_format = None if fixture == "missing queue capability" else 1
+                self.server.jobs[0]["cliVersion"] = "2.1.307" if fixture == "older worker build" else self.server.version
                 if fixture in ("future compatible build", "standalone build"):
                     version = "9.4.2000" if fixture == "future compatible build" else "2.1.300"
                     (self.root / "version.txt").write_text(version + " (Claude Code)")

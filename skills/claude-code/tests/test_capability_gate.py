@@ -38,15 +38,23 @@ class CapabilityGateTests(IsolatedCase):
                     self.assertEqual(self.reply_count(), before + 1)
         self.assertTrue(all(c[0] in ("agents", "--version") for c in self.cli_calls()))
 
-    def test_future_version_and_good_ping_without_structural_proof_refuse(self):
+    def test_future_version_and_good_ping_without_structural_proof_proceeds_unreviewed(self):
         self.versions("8.7.6000.1", "8.7.6000")
-        with patch.object(contract, "attest_image", side_effect=contract.ContractError("changed queue structure")), \
-                patch.object(native.NativeReply, "_auth", side_effect=AssertionError):
+        with patch.object(contract, "attest_image", side_effect=contract.ContractError("changed queue structure")):
             code, result = self.call("doctor", SID, "--json")
-        self.assertEqual((code, result["error_code"]), (4, "ECONTRACT"))
-        self.assertIn("changed queue structure", result["note"])
-        self.assertFalse(self.state.exists())
-        self.assertEqual(self.reply_count(), 0)
+            self.assertEqual(code, 0, result)
+            self.assertEqual(result["compatibility"], "negotiated-unreviewed-build")
+            self.assertFalse(result["reviewed_build"] or result["process_image_verified"])
+            self.assertEqual(result["supervisor_image"], "unreviewed")
+            self.assertIsNone(result["contract"])
+            self.assertTrue(any("unreviewed build" in w for w in result["warnings"]))
+            self.assertFalse(self.state.exists())
+            code, sent = self.call("send", SID, TEXT, "--request-id", "future-unreviewed")
+        self.assertEqual(code, 0, sent)
+        self.assertTrue(sent["accepted"])
+        self.assertFalse(sent["reviewed_build"])
+        self.assertIs(self.replies()[-1]["nextTurn"], True)
+        self.assertEqual(self.reply_count(), 1)
 
     def test_malformed_negotiation_fails_before_auth(self):
         original = {"ok": True, "op": "ping", "version": "2.1.999", "proto": 1, "carriedPromptsFormat": 1}
@@ -54,7 +62,7 @@ class CapabilityGateTests(IsolatedCase):
             ("ok", [False, 1, None]), ("op", [None, "list"]),
             ("proto", [True, False, None, "1", 1.0, 2]),
             ("carriedPromptsFormat", [True, None, "1", 1.0, 0, 2]),
-            ("version", [None, False, "2.1.999-custom", "2.1.999 2.1.998"])) for value in values]
+            ("version", [None, False, "", "2.1.999 2.1.998", "x" * 81, "-2.1.999"])) for value in values]
         for response in cases:
             with self.subTest(response=response), patch.object(native.NativeReply, "_rpc", return_value=response), \
                     patch.object(native.NativeReply, "_auth", side_effect=AssertionError), \
@@ -71,14 +79,28 @@ class CapabilityGateTests(IsolatedCase):
             with self.subTest(value=value), self.assertRaises((ValueError, UnicodeError)):
                 native.strict_json(value)
 
-    def test_worker_version_skew_is_independent_of_cli_version(self):
+    def test_suffixed_future_supervisor_version_is_negotiated_not_refused(self):
+        for version in ("2.1.999-custom", "3.0.0-rc1", "2.1.330+build.7"):
+            with self.subTest(version=version):
+                self.versions("2.1.323.1727", version)
+                code, report = self.call("doctor", SID, "--json")
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["daemon_version"], version)
+                self.assertFalse(report["skew"])
+        self.assertEqual(self.reply_count(), 0)
+
+    def test_worker_version_skew_is_reported_independent_of_cli_version(self):
         for cli in ("2.1.300", "2.1.312.1459", "9.0.8888.1234"):
             self.versions(cli, "2.1.312", "2.1.311")
             code, report = self.call("doctor", SID, "--json")
-            self.assertEqual((code, report["error_code"]), (4, "ESKEW"))
+            self.assertEqual(code, 0, report)
+            self.assertTrue(report["skew"] and report["target"]["skew"])
+            self.assertEqual((report["worker_version"], report["daemon_version"]), ("2.1.311", "2.1.312"))
+            self.assertEqual(report["route"], "agents-ui-reply")
+            self.assertTrue(report["target"]["send_ready"])
         self.assertEqual(self.reply_count(), 0)
 
-    def test_matching_worker_version_but_wrong_executable_is_refused(self):
+    def test_matching_worker_version_but_different_executable_is_reported(self):
         actual = contract.process_image
         # Use a real direct child so the pair check passes; the executable
         # attestation, not a version string, must catch an image mismatch.
@@ -89,12 +111,22 @@ class CapabilityGateTests(IsolatedCase):
             self.assertEqual(child.stdout.readline(), b"ready\n")
             self.session["pid"] = child.pid
             self.set_sessions([self.session])
+            other = self.root / "different-image"
+            other.write_bytes(b"not the supervisor image")
+            other.chmod(0o700)
             def mismatch(pid):
-                return self.root / "different-image" if pid == child.pid else actual(pid)
+                return other if pid == child.pid else actual(pid)
             with patch.object(contract, "process_image", side_effect=mismatch):
+                code, report = self.call("doctor", SID, "--json")
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["target"]["worker_image"], "different-image")
+                self.assertEqual(report["target"]["worker_structure"], "unreviewed")
+                self.assertTrue(any("different executable" in w for w in report["warnings"]))
                 code, result = self.call("send", SID, TEXT)
-            self.assertEqual((code, result["error_code"]), (4, "ECONTRACT"))
-            self.assertEqual(self.reply_count(), 0)
+            self.assertEqual(code, 0, result)
+            self.assertTrue(result["accepted"])
+            self.assertIs(self.replies()[-1]["nextTurn"], True)
+            self.assertEqual(self.reply_count(), 1)
         finally:
             child.terminate()
             child.wait(timeout=5)
@@ -197,7 +229,7 @@ class CapabilityGateTests(IsolatedCase):
         with patch.object(contract, "file_identity", return_value=(0, 0, 0, 0, 0)):
             with self.assertRaises(native.BridgeError) as caught:
                 bridge.reply(self.session, TEXT)
-        self.assertEqual(caught.exception.code, "ECONTRACT")
+        self.assertEqual(caught.exception.code, "ECHANGED")
         self.assertFalse(caught.exception.uncertain)
         self.assertEqual(self.reply_count(), 0)
 

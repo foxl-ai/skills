@@ -68,32 +68,48 @@ class Toolbox310Tests(IsolatedCase):
                             for call in self.server.calls if call["op"] == "reply"))
         self.assertTrue(all(args[0] in ("agents", "--version") for args in self.cli_calls()))
 
-    def test_cli_suffix_extra_component_and_ambiguous_versions_fail(self):
-        versions = (CLI + ".1", CLI + "-dev", CLI + "+custom", CLI + "x",
-                    "v" + CLI, "2.1.309.1365-rc1", CLI + " 2.1.309.1365",
-                    CLI + "-dev (based on " + CLI + ")")
-        for version in versions:
+    def test_cli_suffix_extra_component_and_ambiguous_versions_are_informational(self):
+        # Reported whole or as unknown, never truncated to a reviewed-looking prefix, never refused.
+        expected = {CLI + ".1": CLI + ".1", CLI + "-dev": CLI + "-dev", CLI + "+custom": CLI + "+custom",
+                    CLI + "x": CLI + "x", "2.1.309.1365-rc1": "2.1.309.1365-rc1", "v" + CLI: None,
+                    CLI + " 2.1.309.1365": None, CLI + "-dev (based on " + CLI + ")": None}
+        for index, (version, reported) in enumerate(sorted(expected.items())):
             with self.subTest(version=version):
                 self.versions(version, DAEMON)
-                code, result = self.call("send", SID, TEXT)
-                self.assertEqual((code, result["error_code"]), (4, "EVERSION"))
-        self.assertEqual(self.server.calls, [])
+                code, report = self.call("doctor", SID, "--json")
+                self.assertEqual(code, 0, report)
+                self.assertEqual(report["cli_version"], reported)
+                code, result = self.call("send", SID, TEXT, "--request-id", "cli-label-%d" % index)
+                self.assertEqual(code, 0, result)
+                self.assertTrue(result["accepted"])
+        self.assertEqual(self.reply_count(), len(expected))
 
-    def test_worker_skew_and_protocol_fail_before_reply(self):
+    def test_worker_skew_sends_once_while_protocol_failure_still_refuses(self):
+        sent = 0
         for daemon in (PREVIOUS, DAEMON):
             for worker in ("2.1.308", "2.1.311", CLI, "unknown", None,
                            PREVIOUS if daemon == DAEMON else DAEMON):
-                self.versions(CLI, daemon)
-                self.server.jobs[0]["cliVersion"] = worker
-                code, result = self.call("send", SID, TEXT)
-                self.assertEqual((code, result["error_code"]), (4, "ESKEW"))
+                with self.subTest(daemon=daemon, worker=worker):
+                    self.versions(CLI, daemon)
+                    self.server.jobs[0]["cliVersion"] = worker
+                    key = "310-skew-%s-%s" % (daemon, worker)
+                    code, result = self.call("send", SID, TEXT, "--request-id", key)
+                    self.assertEqual(code, 0, result)
+                    self.assertTrue(result["accepted"] and result["skew"])
+                    self.assertEqual(result["route"], "agents-ui-reply")
+                    self.assertEqual(result["daemon_version"], daemon)
+                    self.assertNotIn("nextTurn", self.replies()[-1])
+                    sent += 1
+                    self.assertTrue(self.call("send", SID, TEXT, "--request-id", key)[1]["duplicate_suppressed"])
+                    self.assertEqual(self.reply_count(), sent)
+        receipts = len(list((self.state / "native-replies-v1").glob("*.json")))
         self.versions(CLI, DAEMON)
         for proto, queue_format in ((2, 1), (True, 1), (1, 2), (1, True)):
             self.server.proto, self.server.carried_prompts_format = proto, queue_format
             code, result = self.call("send", SID, TEXT)
             self.assertEqual((code, result["error_code"]), (4, "EPROTO"))
-        self.assertEqual(self.reply_count(), 0)
-        self.assertEqual(list((self.state / "native-replies-v1").glob("*.json")), [])
+        self.assertEqual(self.reply_count(), sent)
+        self.assertEqual(len(list((self.state / "native-replies-v1").glob("*.json"))), receipts)
 
     def test_310_identity_duplicates_stopped_and_unavailable_targets_refuse(self):
         original = dict(self.server.jobs[0])

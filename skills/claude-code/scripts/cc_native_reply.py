@@ -1,8 +1,10 @@
 """Minimal, unsupported Claude supervisor reply bridge. Standard library only.
 
-Only independently verified wire contracts are allowed. Never starts a daemon,
-retries a reply, edits Claude's files, or invokes a native binary behind a wrapper.
-See reference/native-reply-contract.json for the scrubbed contract evidence.
+Live negotiation (integer protocol 1, carriedPromptsFormat 1) plus exact target,
+socket, peer and auth checks decide whether a reply is sent. CLI, supervisor and
+worker version or image differences are reported, never refused by themselves.
+Never starts a daemon, retries a reply, edits Claude's files, or invokes a native
+binary behind a wrapper. See reference/native-reply-contract.json.
 """
 import hashlib
 import json
@@ -16,13 +18,19 @@ import subprocess
 import sys
 import time
 
-from cc_contract import ContractError, ProcessAttestation
+from cc_contract import ContractChanged, ContractError, ProcessAttestation, UnsafeImage
 
 PROTOCOL = 1
 QUEUE_FORMAT = 1
-# Version syntax is diagnostic only. Compatibility is negotiated and attested
-# against the live supervisor image, never inferred from patch/build numbers.
+# Version text is informational only. Compatibility is negotiated live, never
+# inferred from (or refused because of) patch/build numbers or suffixes.
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?\Z")
+VERSION_TOKEN = re.compile(r"[0-9A-Za-z][0-9A-Za-z.+_-]{0,79}\Z")
+# Job/session states that mean the target cannot take a reply. Other (including
+# future) state names are left to the supervisor, which refuses pre-accept.
+UNAVAILABLE = frozenset(("stopped", "failed", "exited", "killed", "crashed", "dead", "removed", "offline"))
+NEXT_TURN = "next-turn-queue"
+AGENTS_UI = "agents-ui-reply"
 SHORT_ID = re.compile(r"[0-9a-f]{8}\Z")
 SESSION_ID = re.compile(r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\Z")
 MAX_REPLY = 64 * 1024
@@ -131,12 +139,12 @@ class NativeReply:
     def __init__(self, config, cli_version, timeout=3.0, temp_root=None):
         if os.name != "posix" or not hasattr(os, "getuid") or os.getuid() != os.geteuid():
             reject("EPLATFORM", "Native reply requires a non-setuid POSIX process.")
-        if not isinstance(cli_version, str) or len(cli_version) > 80 or not VERSION.fullmatch(cli_version):
-            reject("EVERSION", "Cannot identify the configured CLI version without truncating or guessing.")
         if not (sys.platform == "darwin" or sys.platform.startswith("linux")):
             reject("EPLATFORM", "Verified process/socket identity is supported only on macOS and Linux.")
+        # The configured CLI only supplies session reads; its version is a label.
+        self.cli_version = (cli_version if isinstance(cli_version, str) and VERSION_TOKEN.fullmatch(cli_version)
+                            else None)
         self.config = Path(os.path.abspath(os.path.expanduser(config)))
-        self.cli_version = cli_version
         self.timeout = max(0.05, min(float(timeout), 10.0))
         # temp_root is dependency injection for isolated tests, never an environment override.
         root = Path(os.path.realpath(temp_root or "/tmp"))
@@ -148,19 +156,27 @@ class NativeReply:
         self.daemon_version = None
         self._prepared = None
         self._worker_pid = None
+        self._worker_version = None
         self._process_pair = None
         self._attestation = ProcessAttestation()
-        self._contract_id = None
+        self._supervisor = None
+        self._target = None
+        self._route = None
 
     def _attest(self, worker=None, repl=None):
+        """Gather image/structure evidence. Differences are informational."""
         try:
-            self._contract_id = self._attestation.supervisor(self.peer[1])
+            self._supervisor = self._attestation.supervisor(self.peer[1])
             if worker is not None:
-                self._attestation.worker(worker, repl)
-        except ContractError as exc:
-            reject("ECONTRACT", "Cannot establish queue-v1 process/structural compatibility: " + str(exc))
-        except (OSError, ValueError, KeyError, TypeError, RecursionError):
-            reject("ECONTRACT", "The live process image or structural contract is unavailable or malformed.")
+                return self._attestation.worker(worker, repl)
+        except ContractChanged:
+            reject("ECHANGED", "The supervisor or worker process/executable changed during this request. No reply was sent.")
+        except UnsafeImage:
+            reject("EPATH", "The live Claude executable is owned or writable by another user.")
+        except (ContractError, OSError, ValueError, KeyError, TypeError, RecursionError):
+            # Internal evidence errors only. Unreviewed/unreadable/deleted images do not land here.
+            reject("ECONTRACT", "The live process identity could not be pinned for this request.")
+        return None
 
     def _validate_path(self):
         safe_ancestors(self.config)
@@ -207,8 +223,8 @@ class NativeReply:
                 self.peer = identity
                 self._validate_path()
                 if mutating:
-                    # Pin the kernel process image right before the first reply
-                    # byte, not just at an earlier successful doctor probe.
+                    # Recheck the pinned process/image evidence right before the
+                    # first reply byte, not just at an earlier doctor probe.
                     self._attest(self._worker_pid, self._prepared[2])
                     if validate_process_pair(self._worker_pid, self._prepared[2]) != self._process_pair:
                         reject("ECHANGED", "The worker/REPL changed before the reply write. No reply was sent.")
@@ -258,12 +274,14 @@ class NativeReply:
             reject("EPROTO", "The supervisor must explicitly negotiate integer protocol 1.")
         if type(reply.get("carriedPromptsFormat")) is not int or reply["carriedPromptsFormat"] != QUEUE_FORMAT:
             reject("EPROTO", "The supervisor must advertise integer carriedPromptsFormat=1; nextTurn alone is insufficient.")
-        if (not isinstance(reply.get("version"), str) or len(reply["version"]) > 80 or
-                not VERSION.fullmatch(reply["version"])):
-            reject("EPROTO", "The supervisor supplied a missing, malformed or ambiguous version identity.")
-        if self.daemon_version is not None and self.daemon_version != reply["version"]:
+        version = reply.get("version")
+        # Any single version token is fine (future builds, suffixes); it is only
+        # compared for skew reporting and mid-request change detection.
+        if not isinstance(version, str) or not VERSION_TOKEN.fullmatch(version):
+            reject("EPROTO", "The supervisor supplied a missing or malformed version identity.")
+        if self.daemon_version is not None and self.daemon_version != version:
             reject("ECHANGED", "The supervisor version changed during this request.")
-        self.daemon_version = reply["version"]
+        self.daemon_version = version
         self._attest()
         try:
             self._auth()
@@ -271,13 +289,27 @@ class NativeReply:
             raise
         except (OSError, UnicodeError):
             reject("EAUTHFILE", "The normal local supervisor control key is unavailable.")
-        return {"cli_version": self.cli_version, "daemon_version": self.daemon_version,
+        image = self._supervisor["image"]
+        reviewed = image == "reviewed"
+        cli_skew = None if self.cli_version is None else self.cli_version.split(".")[:3] != version.split(".")[:3]
+        warnings = []
+        if not reviewed:
+            warnings.append(("Supervisor %s is an unreviewed build" if image == "unreviewed" else
+                             "Supervisor %s executable could not be inspected (an update may have removed it)")
+                            % version + "; proceeding on negotiated protocol 1 and carriedPromptsFormat 1.")
+        if self.cli_version is None:
+            warnings.append("The configured CLI version could not be read; it is informational only.")
+        elif cli_skew:
+            warnings.append("CLI %s and supervisor %s are different builds; informational only."
+                            % (self.cli_version, version))
+        return {"cli_version": self.cli_version, "daemon_version": version,
                 "protocol": PROTOCOL, "queue_format": QUEUE_FORMAT,
-                "compatibility": "negotiated-and-structurally-attested",
-                "contract": self._contract_id, "private_bridge": True, "peer_verified": True,
-                "process_image_verified": True, "auth_file_valid": True, "auth_verified": False,
-                "cli_daemon_skew": self.cli_version.split(".")[:3] != self.daemon_version.split(".")[:3],
-                "note": "Read-only probe. CLI version is informational; authentication is verified only by an actual reply."}
+                "compatibility": "negotiated-and-structurally-attested" if reviewed else "negotiated-unreviewed-build",
+                "reviewed_build": reviewed, "supervisor_image": image,
+                "contract": self._supervisor["contract"], "private_bridge": True, "peer_verified": True,
+                "process_image_verified": reviewed, "auth_file_valid": True, "auth_verified": False,
+                "cli_daemon_skew": cli_skew, "warnings": warnings,
+                "note": "Read-only probe. Version differences are informational; authentication is verified only by an actual reply."}
 
     def _job(self, session):
         response = self._rpc({"proto": PROTOCOL, "op": "list"})
@@ -288,43 +320,94 @@ class NativeReply:
         if len(matches) != 1:
             reject("ETARGET", "The target is missing or ambiguous in the supervisor.")
         job = matches[0]
+        state = job.get("state")
         if (job.get("sessionId") != session["sessionId"] or job.get("backend") != "daemon" or
                 job.get("dying") or job.get("outcome") or job.get("legacy") or
-                job.get("state") not in ("working", "blocked", "done")):
+                not isinstance(state, str) or state in UNAVAILABLE):
             reject("ETARGET", "The target identity changed, is unavailable, or is not a native daemon session.")
-        if job.get("cliVersion") != self.daemon_version:
-            reject("ESKEW", "Safe-boundary reply requires the worker and supervisor to report the same version.")
+        # No worker/supervisor version comparison here: skew selects a route, it never refuses.
         return job
+
+    @staticmethod
+    def _awaiting_input(session, job):
+        """Pending question/permission/dialog, or a status this helper cannot classify."""
+        return (session.get("status") not in ("busy", "idle") or
+                "blocked" in (session.get("state"), job.get("state"), job.get("tempo")))
 
     def prepare(self, session):
         sid, uuid = session.get("id"), session.get("sessionId")
+        state, status = session.get("state"), session.get("status")
         if (not isinstance(sid, str) or not SHORT_ID.fullmatch(sid) or
                 not isinstance(uuid, str) or not SESSION_ID.fullmatch(uuid) or
                 type(session.get("pid")) is not int or session["pid"] <= 0 or
-                session.get("state") not in ("working", "blocked", "done") or
-                session.get("status") not in ("busy", "waiting", "idle")):
+                not isinstance(state, str) or state in UNAVAILABLE or
+                not isinstance(status, str) or status in UNAVAILABLE):
             reject("ETARGET", "The target is not an available canonical local Claude session.")
-        self.probe()
+        probe = self.probe()
         job = self._job(session)
         self._worker_pid = job.get("pid")
         self._process_pair = validate_process_pair(self._worker_pid, session["pid"])
-        self._attest(self._worker_pid, session["pid"])
+        image = self._attest(self._worker_pid, session["pid"])
+        self._worker_version = job.get("cliVersion")
+        # The supervisor itself refuses nextTurn (ESKEW) unless the worker reports
+        # exactly its version, so a skewed worker gets the agents-UI request.
+        skew = self._worker_version != self.daemon_version
+        self._route = AGENTS_UI if skew else NEXT_TURN
         self._prepared = (sid, uuid, session["pid"])
-        return {"id": sid, "sessionId": uuid, "worker_version": job["cliVersion"],
-                "daemon_version": self.daemon_version, "protocol": PROTOCOL}
+        worker_version = (self._worker_version if isinstance(self._worker_version, str) and
+                          VERSION_TOKEN.fullmatch(self._worker_version) else None)
+        warnings = list(probe["warnings"])
+        if skew:
+            warnings.append("Worker %s and supervisor %s are different builds (normal after an update); the reply is "
+                            "sent the way the agents UI sends it." % (worker_version or "(unknown)", self.daemon_version))
+        if image["image"] == "unavailable":
+            warnings.append("The worker executable could not be inspected (an update may have removed it); informational only.")
+        elif image["image"] == "different-image":
+            warnings.append("The worker runs a different executable than the supervisor (%s structure); informational only."
+                            % image["structure"])
+        ready = not (skew and self._awaiting_input(session, job))
+        self._target = {"id": sid, "sessionId": uuid, "worker_version": worker_version,
+                        "daemon_version": self.daemon_version, "protocol": PROTOCOL,
+                        "skew": skew, "route": self._route,
+                        "worker_image": image["image"], "worker_structure": image["structure"],
+                        "reviewed_build": self._supervisor["image"] == "reviewed",
+                        "send_ready": ready, "warnings": warnings}
+        if not ready:
+            self._target["send_refusal"] = "EBLOCKED"
+            warnings.append(BLOCKED)
+        return dict(self._target, warnings=list(warnings))
+
+    def check_text(self, text):
+        """The agents-UI request is handled like typed input. Refuse what would not
+        stay an ordinary prompt; the next-turn route skips slash commands natively."""
+        if self._route != AGENTS_UI:
+            return
+        if not self._target["send_ready"]:
+            reject("EBLOCKED", BLOCKED)
+        if text.lstrip()[:1] in ("/", "!"):
+            reject("ECOMMAND", "On a different-build worker, text starting with / or ! would run as a command. "
+                               "Rephrase it, or use the agents UI.")
+        if any((ord(c) < 32 and c not in "\n\t") or 127 <= ord(c) < 160 for c in text):
+            reject("EMESSAGE", "On a different-build worker, terminal control characters are not allowed in reply text.")
 
     def reply(self, session, text):
         if self._prepared != (session.get("id"), session.get("sessionId"), session.get("pid")):
             reject("ETARGET", "Reply target has not passed the read-only identity checks.")
         if not isinstance(text, str) or not text.strip() or len(text.encode("utf-8")) > MAX_REPLY or "\0" in text:
             reject("EMESSAGE", "Reply text must be nonempty UTF-8 without NUL and at most 64 KiB.")
+        self.check_text(text)
         if validate_process_pair(self._worker_pid, session["pid"]) != self._process_pair:
             reject("ECHANGED", "The native worker/REPL changed after preparation. No reply was sent.")
         # Repeat only read-only negotiation/identity immediately before mutation.
         # There is deliberately no retry of reply, even after an unknown ACK.
         self.probe()
-        if self._job(session).get("pid") != self._worker_pid:
+        job = self._job(session)
+        if job.get("pid") != self._worker_pid:
             reject("ECHANGED", "The native target worker changed after preparation.")
+        if job.get("cliVersion") != self._worker_version:
+            reject("ECHANGED", "The native target worker build changed after preparation. No reply was sent.")
+        if self._route == AGENTS_UI and self._awaiting_input(session, job):
+            reject("EBLOCKED", BLOCKED)
         try:
             token = self._auth()
         except BridgeError:
@@ -333,20 +416,28 @@ class NativeReply:
             reject("EAUTHFILE", "The normal local supervisor control key is unavailable.")
         if validate_process_pair(self._worker_pid, session["pid"]) != self._process_pair:
             reject("ECHANGED", "The native worker/REPL changed after preparation. No reply was sent.")
-        # nextTurn uses native safe-boundary queue semantics, including while idle.
+        request = {"proto": PROTOCOL, "op": "reply", "short": session["id"], "text": text, "auth": token}
+        if self._route == NEXT_TURN:
+            # Native safe-boundary queue semantics, including while idle.
+            request["nextTurn"] = True
         try:
-            response = self._rpc({"proto": PROTOCOL, "op": "reply", "short": session["id"],
-                                  "text": text, "auth": token, "nextTurn": True}, mutating=True)
+            response = self._rpc(request, mutating=True)
         finally:
             # This client object is single-attempt too, including after a dropped ACK.
             self._prepared = None
         if response == {"ok": True, "op": "reply"}:
             return {"accepted": True, "queued": True, "observed": False,
                     "id": session["id"], "sessionId": session["sessionId"],
-                    "protocol": PROTOCOL, "daemon_version": self.daemon_version}
+                    "protocol": PROTOCOL, "daemon_version": self.daemon_version,
+                    "worker_version": self._target["worker_version"], "skew": self._target["skew"],
+                    "route": self._route, "reviewed_build": self._target["reviewed_build"]}
         code = response.get("code")
         # Only reviewed pre-enqueue refusals can establish that nothing was accepted.
         if response.get("ok") is False and isinstance(code, str) and code in {
                 "EAUTH", "EPROTO", "ESTARTING", "ERESPAWNING", "ESKEW", "ENOJOB", "ENOREPLY"}:
             raise BridgeError(code, "The supervisor refused the reply (%s). No retry was made." % code)
         raise BridgeError("EACK", "The reply acknowledgement was not recognized. Do not resend.", uncertain=True)
+
+
+BLOCKED = ("The session is waiting on a question, permission or dialog. On a different-build worker an ordinary "
+           "reply could answer it, so answer it in the agents UI (or send again once it is busy or idle).")

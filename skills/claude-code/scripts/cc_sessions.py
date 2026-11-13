@@ -20,7 +20,8 @@ import subprocess
 import sys
 import time
 
-from cc_native_reply import BridgeError, NativeReply, MANUAL, MAX_REPLY, SHORT_ID, SESSION_ID
+from cc_native_reply import (AGENTS_UI, BridgeError, NativeReply, MANUAL, MAX_REPLY, SHORT_ID, SESSION_ID,
+                             VERSION_TOKEN)
 from cc_outbox import Outbox, atomic_save
 
 CLAUDE = os.environ.get("CLAUDE_BIN", "claude")
@@ -63,12 +64,16 @@ def need_bg_support():
 
 
 def cli_version():
+    """The configured CLI's version label, or None. Informational only.
+
+    The CLI never sends the reply, so an unreadable, suffixed or new-format
+    version is reported, not refused. Exactly one complete token is required to
+    report a value; nothing is truncated or guessed.
+    """
     code, out, _ = run([CLAUDE, "--version"], timeout=15)
-    # Parse one complete version token, not an allowed prefix of an unknown
-    # suffix. Native and Toolbox formats are preserved; digits do not grant send.
     hits = re.findall(r"(?<![\w.+-])\d+\.\d+\.\d+[\w.+-]*", out)
-    if code or len(hits) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?", hits[0]):
-        raise BridgeError("EVERSION", "Cannot identify the configured CLI build safely.")
+    if code or len(hits) != 1 or not VERSION_TOKEN.fullmatch(hits[0]):
+        return None
     return hits[0]
 
 
@@ -350,7 +355,10 @@ def cmd_doctor(a):
         s = find(a.ref)
         box = Outbox(STATE, CONFIG)
         box.assert_current(box.legacy(), s["id"])
-        report["target"] = bridge.prepare(s)
+        target = bridge.prepare(s)
+        report["target"] = target
+        report.update(skew=target["skew"], worker_version=target["worker_version"], route=target["route"],
+                      warnings=target["warnings"])  # Includes this probe's warnings.
     report["manual"] = MANUAL
     print(json.dumps(report, indent=1))
 
@@ -377,11 +385,17 @@ def cmd_send(a):
         if previous is not None:
             return receipt_output(previous, duplicate=True)
         bridge = NativeReply(CONFIG, cli_version())
-        bridge.prepare(s)
+        target = bridge.prepare(s)
+        bridge.check_text(a.message)  # Route-specific refusals happen before any reservation.
+        receipt.update({key: target[key] for key in (
+            "worker_version", "daemon_version", "skew", "route", "reviewed_build", "warnings")})
         atomic_save(path, receipt)  # Crash-safe reservation BEFORE any reply bytes are sent.
         try:
             response = bridge.reply(s, a.message)
             receipt.update(response, status="accepted", note=(
+                "Accepted by the supervisor for the same session, delivered the way the agents UI does "
+                "because the worker is a different build. Consumption is not observed."
+                if target["route"] == AGENTS_UI else
                 "Accepted into the same native session's safe-boundary queue. "
                 "Consumption is not observed; multiple messages may share a turn."))
         except BridgeError as exc:
