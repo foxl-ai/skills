@@ -2,8 +2,10 @@
 
 This is independent helper code, not vendor implementation. Only fingerprints
 of reviewed control-flow tokens are distributed. Nothing is imported/executed
-from a Claude image. A new version number is not a capability; an unchanged
-reviewed handler structure AND live protocol negotiation are required.
+from a Claude image. Live protocol negotiation is the capability. A reviewed
+fingerprint is reported as evidence; an unreviewed, unreadable or deleted image
+(normal after a Toolbox/native update) is reported, not refused. Only unsafe
+executable ownership and mid-request process/image changes stop a send.
 """
 import ctypes
 import ctypes.util
@@ -42,6 +44,14 @@ OPERATORS = tuple(sorted(("===", "!==", "=>", "==", "!=", "<=", ">=", "&&", "||"
 
 class ContractError(Exception):
     pass
+
+
+class UnsafeImage(ContractError):
+    """The live executable is writable by, or owned by, another user."""
+
+
+class ContractChanged(ContractError):
+    """A pinned supervisor/worker process or executable changed mid-request."""
 
 
 def tokens(source):
@@ -276,9 +286,10 @@ def file_identity(path):
     from cc_native_reply import safe_ancestors
     safe_ancestors(path.parent)
     st = os.lstat(path)
-    if (not stat.S_ISREG(st.st_mode) or st.st_uid not in (0, os.getuid()) or
-            st.st_mode & 0o022 or not st.st_mode & 0o111 or not 0 < st.st_size <= MAX_IMAGE):
-        raise ContractError("process executable has unsafe ownership, mode or size")
+    if not stat.S_ISREG(st.st_mode):
+        raise ContractError("process executable is not a regular file")
+    if st.st_uid not in (0, os.getuid()) or st.st_mode & 0o022:
+        raise UnsafeImage("process executable is owned or writable by another user")
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
@@ -290,6 +301,8 @@ def attest_image(path):
     No path or source bytes are returned in the public diagnostic report.
     """
     before = file_identity(path)
+    if not 0 < before[2] <= MAX_IMAGE:
+        raise ContractError("process executable is empty or too large to inspect")
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         st = os.fstat(fd)
@@ -309,38 +322,92 @@ def attest_image(path):
     raise ContractError("reply/handoff/receive structure differs from reviewed queue-v1 contracts")
 
 
+def locate(pid):
+    """Kernel image path plus safe file identity, or (None, None) when the image
+    is gone (an update deleted it) or unreadable. Unsafe ownership still raises."""
+    try:
+        path = process_image(pid)
+        return path, file_identity(path)
+    except UnsafeImage:
+        raise
+    except (ContractError, OSError):
+        return None, None
+
+
+def structure(path):
+    """Reviewed contract id, or None when unreviewed or uninspectable."""
+    try:
+        return attest_image(path)[1]
+    except UnsafeImage:
+        raise
+    except (ContractError, OSError, ValueError, KeyError, TypeError, RecursionError, UnicodeError):
+        return None
+
+
+RELATION = {"same-as-supervisor": 0, "different-image": 1, "unavailable": 2}
+
+
 class ProcessAttestation:
+    """Report image/structure evidence and pin it for ECHANGED detection.
+
+    Version or image differences between supervisor and worker are normal after
+    an update (older sessions keep running, and the updater may delete their
+    binary). They are reported, never refused. What is refused: unsafe
+    executable ownership, and a pinned process or image changing mid-request.
+    """
     def __init__(self):
         self.peer = None
-        self.image = None
-        self.identity = None
-        self.contract_id = None
+        self.summary = None
         self.target = None
+        self.target_summary = None
+        self._structures = {}
+
+    def _structure(self, path, identity):
+        key = (path, identity)
+        if key not in self._structures:
+            self._structures[key] = structure(path)
+        return self._structures[key]
 
     def supervisor(self, peer_pid):
         from cc_native_reply import validate_process_pair
         stamp = validate_process_pair(peer_pid, peer_pid)
-        image = process_image(peer_pid)
+        path, identity = locate(peer_pid)
+        current = (peer_pid, stamp, path, identity)
         if self.peer is not None:
-            if (peer_pid, stamp) != self.peer or image != self.image or file_identity(image) != self.identity:
-                raise ContractError("supervisor process or executable changed")
-            return self.contract_id
-        identity, contract = attest_image(image)
-        self.peer = (peer_pid, stamp)
-        self.image, self.identity, self.contract_id = image, identity, contract
-        return contract
+            if current != self.peer:
+                raise ContractChanged("supervisor process or executable changed")
+            return self.summary
+        contract = self._structure(path, identity) if path is not None else None
+        self.peer = current
+        self.summary = {"image": "unavailable" if path is None else "reviewed" if contract else "unreviewed",
+                        "contract": contract}
+        return self.summary
 
     def worker(self, worker_pid, repl_pid):
-        # Matching version text is insufficient: require the exact live image
-        # already attested for the supervisor, plus the bridge's UID/start pair.
         if self.peer is None:
             raise ContractError("supervisor was not attested")
-        for pid in {worker_pid, repl_pid}:
-            path = process_image(pid)
-            if path != self.image or file_identity(path) != self.identity:
-                raise ContractError("worker/REPL executable differs from the supervisor")
-        current = (worker_pid, repl_pid)
-        if self.target is not None and current != self.target:
-            raise ContractError("worker process identity changed")
+        images = {pid: locate(pid) for pid in sorted({worker_pid, repl_pid})}
+        current = ((worker_pid, repl_pid), tuple(sorted(images.items())))
+        if self.target is not None:
+            if current != self.target:
+                raise ContractChanged("worker process or executable changed")
+            return self.target_summary
+        relation, contracts = "same-as-supervisor", set()
+        for path, identity in images.values():
+            if path is None:
+                kind, contract = "unavailable", None
+            elif (path, identity) == self.peer[2:]:
+                kind, contract = "same-as-supervisor", self.summary["contract"]
+            else:
+                kind, contract = "different-image", self._structure(path, identity)
+            relation = max(relation, kind, key=RELATION.get)
+            contracts.add(contract)
+        if relation == "unavailable":
+            verdict, contract = "unknown", None
+        elif len(contracts) == 1 and None not in contracts:
+            verdict, contract = "reviewed", next(iter(contracts))
+        else:
+            verdict, contract = "unreviewed", None
         self.target = current
-        return self.contract_id
+        self.target_summary = {"image": relation, "structure": verdict, "contract": contract}
+        return self.target_summary

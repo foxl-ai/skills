@@ -23,7 +23,7 @@
     {
       "id": 3,
       "prompt": "The last follow-up to abcdef12 timed out. Can you make sure it got there? Please don't create another copy or accidentally send the same instruction twice.",
-      "expected_output": "Read receipt/status, preserve the same request key. An unknown outcome stays unknown and never automatically resends; inspect the exact session and offer Space-peek agents guidance. Incompatible protocol or structure also fails closed without changing versions or restarting the daemon.",
+      "expected_output": "Read receipt/status, preserve the same request key. An unknown outcome stays unknown and never automatically resends; inspect the exact session and offer Space-peek agents guidance. A failed protocol negotiation also fails closed without changing versions or restarting the daemon.",
       "files": [],
       "offline_test": "test_unknown_timeout_drop_and_unrecognized_ack_are_never_retried",
       "route": ["send", "abcdef12", "Add the Safari regression test too.", "--request-id", "eval-uncertain-1"],
@@ -33,7 +33,7 @@
     {
       "id": 4,
       "prompt": "Claude updated overnight and the follow-up to abcdef12 says the version was not reviewed. Check whether it is actually compatible without restarting anything.",
-      "expected_output": "Use read-only doctor on the exact existing session. A future numeric CLI build is not rejected when live queue-v1 negotiation, structural and process checks pass. Report that authentication and consumption remain unverified.",
+      "expected_output": "Use read-only doctor on the exact existing session. A future CLI or supervisor build is not rejected when live queue-v1 negotiation and target/process checks pass; a reviewed structure is reported as evidence. Report that authentication and consumption remain unverified.",
       "files": [],
       "fixture": "future compatible build",
       "route": ["doctor", "abcdef12", "--json"],
@@ -51,11 +51,11 @@
     {
       "id": 6,
       "prompt": "The new CLI build still advertises queue format 1, but its reply implementation changed. Can you send the follow-up anyway?",
-      "expected_output": "Do not guess compatibility from ping or an adjacent build number. Refuse ECONTRACT for unreviewed structural evidence before reply or auth and explain that a review or manual agents reply is needed.",
+      "expected_output": "Do not refuse just because the build is newer than the reviewed fingerprints. When the live supervisor negotiates integer protocol 1 and carriedPromptsFormat 1 and the exact target checks pass, doctor passes and reports negotiated-unreviewed-build with reviewed_build false and a warning. Authentication and consumption remain unverified; doctor sends nothing.",
       "files": [],
       "fixture": "unattested structure",
       "route": ["doctor", "abcdef12", "--json"],
-      "expect": {"exit": 4, "status": "refused", "error_code": "ECONTRACT", "accepted": false, "reply_attempts": 0}
+      "expect": {"exit": 0, "compatibility": "negotiated-unreviewed-build", "reviewed_build": false, "auth_verified": false, "reply_attempts": 0}
     },
     {
       "id": 7,
@@ -65,6 +65,15 @@
       "fixture": "standalone build",
       "route": ["doctor", "abcdef12", "--json"],
       "expect": {"exit": 0, "cli_version": "2.1.300", "daemon_version": "2.1.300", "auth_verified": false, "reply_attempts": 0}
+    },
+    {
+      "id": 8,
+      "prompt": "Claude Code updated overnight. My orchestrator session abcdef12 still runs the older build under the newer supervisor. Send it my follow-up without me having to type it into claude agents.",
+      "expected_output": "Send to the same existing session. Worker/supervisor skew is reported (skew true, worker_version, warning), not refused. Because the supervisor only next-turn-queues for its own build, the helper sends the request the agents UI sends, once, with a stable request ID. No restart, resume, stop, respawn or registry edit.",
+      "files": [],
+      "fixture": "older worker build",
+      "route": ["send", "abcdef12", "Also rerun the integration tests before you open the PR.", "--request-id", "eval-skewed-worker"],
+      "expect": {"exit": 0, "created_new": false, "accepted": true, "skew": true, "worker_version": "2.1.307", "route": "agents-ui-reply", "observed": false, "reply_attempts": 1}
     }
   ]
 }

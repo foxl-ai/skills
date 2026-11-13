@@ -20,8 +20,13 @@ helper behavior, not whether a language model chooses the correct tool.
 process-pair and no-daemon regressions. `test_toolbox_310.py` preserves the installed
 310 regressions; assertions about numeric allowlists are now capability checks.
 `test_capability_gate.py` adds future versions, CLI/supervisor skew, worker skew,
-malformed negotiation, insufficient structural evidence, changed UUID/process/image,
+malformed negotiation, unreviewed structural evidence, changed UUID/process/image,
 unknown receipts across upgrades, platform negatives and conservative lexer tests.
+`test_version_skew.py` holds the 2026-11-13 regressions: the observed 2.1.323
+supervisor with a 2.1.322 worker whose binary was deleted, a future unreviewed
+2.1.330 build, the agents-UI route guards, and the refusals skew must not bypass.
+The fake supervisor refuses `nextTurn` for a different-build worker exactly like
+the real one, and every test asserts the helper never triggers that refusal.
 The tiny independently written syntax fixtures are not vendor source excerpts.
 
 Transport tests still exercise real private Unix sockets, kernel peer/image lookup,
@@ -41,7 +46,8 @@ wire shapes, structural hashes and historical evidence. It contains no vendor im
 secret, native session ID, prompt history or user path.
 
 Every follow-up uses a read-only CLI lookup plus supervisor ping/list to verify
-short ID, full session UUID, daemon backend and worker version. The supervisor's
+short ID, full session UUID and daemon backend, and reports worker version and
+skew. Skew selects the route (`next-turn-queue` or `agents-ui-reply`). The supervisor's
 PID identifies its worker, while `agents --json` identifies the REPL child, as
 observed in the live 2.1.309 canary. Both must be same-user live processes, either
 the same PID or a direct parent/child pair. Their process start times and
@@ -76,8 +82,8 @@ configured wrapper or fabricate a new trust grant to run this optional test.
 
 1. Record the pre-test native IDs and create one intentionally new session with
    `spawn`. Never select another person's existing session.
-2. Run `doctor <exact-test-id> --json`. Supervisor and worker versions must match
-   a reviewed contract. Do not restart a shared supervisor to force the test.
+2. Run `doctor <exact-test-id> --json`. Note `skew`, `route`, `reviewed_build` and
+   `warnings`. Do not restart a shared supervisor to force the test.
 3. While the canary is busy, send a harmless uniquely tagged instruction with a
    stable request key. Repeat the exact request/key. Expect one accepted receipt,
    then `duplicate_suppressed: true`, the same short ID/UUID and no second session.
@@ -87,8 +93,8 @@ configured wrapper or fabricate a new trust grant to run this optional test.
    an unrelated worktree as part of the test. Capture scrubbed counts/versions,
    not credentials or other sessions' histories.
 
-Incompatible structures/protocols or worker skew must produce a refusal with
-Space-peek agents UI guidance, not a request to blindly allow a new build.
+A failed protocol negotiation, wrong target or unsafe path must produce a refusal with
+Space-peek agents UI guidance, not a request to change versions or restart the daemon.
 Fake tests and a read-only `doctor` are not evidence of live message consumption.
 If authorization is limited to one existing smoke session, do not run the optional
 create/busy/idle/stop sequence above. Use only its exact UUID and one authorized

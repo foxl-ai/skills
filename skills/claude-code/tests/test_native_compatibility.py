@@ -30,16 +30,24 @@ class NativeCompatibilityTests(IsolatedCase):
         self.assertEqual(self.server.calls, [])
         self.assertTrue(all(args == ["--version"] for args in self.cli_calls()))
 
-    def test_version_suffix_extra_component_and_ambiguous_output_are_not_truncated(self):
-        for output in ("2.1.300-beta (Claude Code)", "2.1.300+build", "2.1.300.7.1",
-                       "v2.1.300-custom", "2.1.300native", "native2.1.300", "",
-                       "2.1.300 (Claude Code) 2.1.309.1365"):
+    def test_version_suffix_extra_component_and_ambiguous_output_are_reported_not_truncated(self):
+        # The CLI never sends the reply: an odd version label is informational, never a refusal.
+        # One complete token is reported whole; ambiguous or prefixed output is reported as unknown.
+        for output, expected in (("2.1.300-beta (Claude Code)", "2.1.300-beta"), ("2.1.300+build", "2.1.300+build"),
+                                 ("2.1.300.7.1", "2.1.300.7.1"), ("2.1.300native", "2.1.300native"),
+                                 ("v2.1.300-custom", None), ("native2.1.300", None), ("", None),
+                                 ("2.1.300 (Claude Code) 2.1.309.1365", None)):
             with self.subTest(output=output):
                 (self.root / "version.txt").write_text(output)
-                with self.assertRaises(native.BridgeError) as error:
-                    helper.cli_version()
-                self.assertEqual(error.exception.code, "EVERSION")
+                self.assertEqual(helper.cli_version(), expected)
         self.assertEqual(self.server.calls, [])
+        (self.root / "version.txt").write_text("2.1.300 (Claude Code) 2.1.309.1365")
+        code, report = self.call("doctor", SID, "--json")
+        self.assertEqual(code, 0)
+        self.assertIsNone(report["cli_version"])
+        self.assertIsNone(report["cli_daemon_skew"])
+        self.assertTrue(any("CLI version could not be read" in w for w in report["warnings"]))
+        self.assertEqual(self.reply_count(), 0)
 
     def test_structural_contract_is_documented_without_numeric_allowlists(self):
         contract = json.loads((SCRIPTS.parent / "reference/native-reply-contract.json").read_text())
@@ -49,7 +57,7 @@ class NativeCompatibilityTests(IsolatedCase):
         self.assertEqual(set(contract["structural_contracts"][0]["sha256"]),
                          {"supervisor_reply", "worker_handoff", "worker_receive"})
 
-    def test_historical_and_future_cli_supervisor_pairs_require_matching_worker(self):
+    def test_historical_and_future_cli_supervisor_pairs_report_worker_skew(self):
         for cli in ("2.1.300", "2.1.308.1355", "2.1.310.1371", "2.1.312.1459", "9.4.2000.9100"):
             (self.root / "version.txt").write_text(cli + " (Claude Code)")
             for daemon in ("2.1.300", "2.1.309", "2.1.310", "2.1.312", "9.4.2000"):
@@ -62,8 +70,15 @@ class NativeCompatibilityTests(IsolatedCase):
                     self.assertEqual(report["daemon_version"], daemon)
                     self.assertEqual(report["target"]["worker_version"], daemon)
                     self.assertFalse(report["auth_verified"])
+                    self.assertFalse(report["target"]["skew"])
+                    self.assertEqual(report["route"], "next-turn-queue")
                     self.server.jobs[0]["cliVersion"] = "2.1.293"
-                    self.assertEqual(self.call("doctor", SID, "--json")[1]["error_code"], "ESKEW")
+                    code, report = self.call("doctor", SID, "--json")
+                    self.assertEqual(code, 0)
+                    self.assertTrue(report["skew"])
+                    self.assertEqual((report["worker_version"], report["daemon_version"]), ("2.1.293", daemon))
+                    self.assertEqual(report["route"], "agents-ui-reply")
+                    self.assertTrue(any("different builds" in w for w in report["warnings"]))
         self.assertFalse(self.state.exists())
         self.assertEqual(self.reply_count(), 0)
 
@@ -193,20 +208,22 @@ class NativeCompatibilityTests(IsolatedCase):
         self.assertNotEqual(other.socket_path, bridge.socket_path)
         self.assertEqual(self.server.calls, [])
 
-    def test_native_auth_mismatch_missing_key_and_worker_skew_fail_closed(self):
+    def test_native_worker_skew_sends_but_auth_mismatch_and_missing_key_fail_closed(self):
         self.configure_native()
         self.server.jobs[0]["cliVersion"] = "2.1.309"
         code, report = self.call("send", SID, TEXT, "--request-id", "native-skew")
-        self.assertEqual(code, 4)
-        self.assertEqual(report["error_code"], "ESKEW")
-        self.assertEqual(self.reply_count(), 0)
+        self.assertEqual(code, 0, report)
+        self.assertTrue(report["accepted"] and report["skew"])
+        self.assertEqual((report["worker_version"], report["daemon_version"]), ("2.1.309", "2.1.300"))
+        self.assertNotIn("nextTurn", self.replies()[-1])
+        self.assertEqual(self.reply_count(), 1)
         self.server.jobs[0]["cliVersion"] = "2.1.300"
         self.key.unlink()
         code, report = self.call("send", SID, TEXT, "--request-id", "native-missing-auth")
         self.assertEqual(code, 4)
         self.assertEqual(report["error_code"], "EAUTHFILE")
         self.assertFalse(self.key.exists())
-        self.assertEqual(self.reply_count(), 0)
+        self.assertEqual(self.reply_count(), 1)
         self.key.write_text("1" * 32)
         self.key.chmod(0o600)
         code, report = self.call("send", SID, TEXT, "--request-id", "native-auth-mismatch")
@@ -214,7 +231,7 @@ class NativeCompatibilityTests(IsolatedCase):
         self.assertEqual(report["error_code"], "EAUTH")
         self.assertFalse(report["accepted"])
         self.assertNotIn("1" * 32, json.dumps(report))
-        self.assertEqual(self.reply_count(), 1)
+        self.assertEqual(self.reply_count(), 2)
 
 
 if __name__ == "__main__":

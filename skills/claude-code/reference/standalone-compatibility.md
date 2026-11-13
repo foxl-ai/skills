@@ -6,6 +6,10 @@ allowlist policy described below was superseded by `compatibility.md` on
 2026-10-28. The original observations and standalone live evidence remain useful;
 current refusal is based on actual queue capability and structural/process checks,
 not a historical version entry. Native 2.1.293 still fails the missing-format check.
+Since 2026-11-13 worker/supervisor version skew, unreviewed structures and
+unreadable CLI version labels are reported instead of refused; see the version
+skew policy in `compatibility.md`. Statements below that call skew a refusal are
+historical.
 
 ## Decision and minimum change
 
@@ -119,14 +123,15 @@ socket and has no implicit model authentication or project trust.
    outcome, even with a new request key.
 5. Stop only the disposable task when authorized. Never restart or replace a
    shared supervisor, edit the user's auth/config, or revive old work to make a
-   test pass. Worker/supervisor skew remains a refusal, not an upgrade request.
+   test pass. Worker/supervisor skew is not an upgrade request either (since
+   2026-11-13 it is reported and sent the agents-UI way, see `compatibility.md`).
 
 The code deliberately retains bounded RPC reads, kernel peer validation, private
 path checks, pinned socket/peer identity and a durable reservation before a single
 reply attempt. No automatic retries, stop/resume/copy delivery, daemon startup or
 native registry writes were added. Non-POSIX systems, noncanonical or unsafe
-paths, unsupported versions/formats, absent or stopped targets and worker skew
-remain outside the send contract.
+paths, a missing queue format, and absent or stopped targets remain outside the
+send contract. (Worker skew was listed here until the 2026-11-13 policy change.)
 
 ## Public references
 

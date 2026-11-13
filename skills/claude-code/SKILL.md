@@ -28,7 +28,7 @@ existing trust confirmation. Do not bypass trust or permission prompts.
 |---|---|
 | `spawn --cwd DIR [--name N] -- TASK` | Create a **new** background session. `start` is an alias. Default: an isolated worktree/branch in git projects. |
 | `send ID\|NAME MESSAGE [--request-id KEY]` | Queue a follow-up into the **same existing native session**, working or idle. Never stop, resume, fork or create a replacement. |
-| `doctor [ID\|NAME] --json` | Read-only protocol, structural compatibility and ownership probe. With a target, validate its exact identity and worker image too. Never starts a daemon. |
+| `doctor [ID\|NAME] --json` | Read-only protocol and ownership probe. With a target, validate its exact identity and report versions, `skew`, the send `route` and `warnings`. Never starts a daemon. |
 | `list [--all] [--json]` | Show sessions, blocked first. Include finished sessions with `--all`. |
 | `overview [--json]` | ONE read-only snapshot: counts by state, details for working, blocked and still-running sessions (last steps, branch, PR, receipts), what finished in the last day (newest first). Use it for "how are my sessions doing". |
 | `status ID\|NAME [--json]` | Read progress, recent tools, last message, branch/commits/PR and send receipts. |
@@ -62,27 +62,42 @@ Never change keys to evade an `unknown` outcome.
 Native `send` is an **unsupported private POSIX bridge**, not an official CLI command.
 On Windows use the agents UI for replies. Spawn, list, status and stop remain
 normal CLI operations there; no POSIX process probes or receipt writes run.
-A new CLI patch/build number is not a reason to stop. Run `doctor` to check the
-actual capability: integer protocol 1, `carriedPromptsFormat: 1`, and reviewed
-reply/handoff/receiver structure in the live supervisor's kernel-identified image.
-The worker and REPL must use that same image and match the supervisor version.
-CLI/supervisor version skew is informational when those checks pass; worker skew
-is refused. The bridge never automatically learns or approves a new structure.
-Missing/ambiguous structure, missing queue capability (including native `2.1.293`),
-unsafe paths/ownership, auth failures and unavailable/stopped targets fail closed.
-Do not restart the daemon, edit a fingerprint, or downgrade security to make a
-send work. `EPROTO` explains negotiation failures, `ECONTRACT` structural/process
-mismatches, and `ENODAEMON` an absent endpoint. Use the manual route below if
-blocked. See `reference/compatibility.md` for proof limits and review procedure;
+**Version differences never block a send by themselves.** Claude Code updates
+often, and older sessions keep running under a newer supervisor (the updater may
+even delete their old binary). `doctor` and `send` report the CLI, supervisor and
+worker versions, `skew: true` and a short warning, then continue. What decides is
+the live capability: integer protocol 1 and `carriedPromptsFormat: 1`. A build
+whose reply structure has not been reviewed yet is reported as
+`negotiated-unreviewed-build` (`reviewed_build: false`), not refused.
+
+How a skewed session is reached: the supervisor only queues "next turn" messages
+for a worker of its own build. For a different-build worker the helper sends the
+same request the `claude agents` reply box sends (`route: agents-ui-reply`), once.
+That route treats text like typed input, so it refuses (before saving a receipt)
+text starting with `/` or `!` (`ECOMMAND`), terminal control characters
+(`EMESSAGE`), and a session waiting on a question, permission or dialog
+(`EBLOCKED`, `doctor` shows `send_ready: false`). Rephrase, wait until it is busy
+or idle, or answer in the agents UI. Same-build sessions keep `next-turn-queue`.
+
+Still refused, because sending would be unsafe or impossible: failed negotiation
+(`EPROTO`, including native `2.1.293` without the queue format), a wrong,
+ambiguous, dying, stopped or non-daemon target (`ETARGET`), unsafe or foreign
+socket, key or executable paths (`EPATH`, `EAUTHFILE`, `EPEER`), rejected auth
+(`EAUTH`), a supervisor, worker or worker build that changes mid-request
+(`ECHANGED`), and an absent endpoint (`ENODAEMON`). Do not restart the daemon,
+edit a fingerprint, or downgrade security to make a send work. Use the manual route
+below if blocked. See `reference/compatibility.md` for the policy and proof limits;
 `reference/standalone-compatibility.md` retains the earlier standalone evidence.
 
 ## What to report
 
-`accepted: true, queued: true` means the supervisor acknowledged the native
-safe-boundary queue request for the same ID. Say **"queued in the existing
-session"**, not "Claude has read it". Native scheduling may combine messages in
-one turn. There is no guaranteed queue position, one-turn-per-message rule, or
-consumption acknowledgement. `observed: false` explicitly means unverified.
+`accepted: true, queued: true` means the supervisor acknowledged the reply for the
+same ID (`route: next-turn-queue`: its safe-boundary queue; `agents-ui-reply`: the
+way the agents UI delivers it). Say **"queued in the existing session"**, not
+"Claude has read it", and mention any `warnings` (for example version skew) in one
+line. Native scheduling may combine messages in one turn. There is no guaranteed
+queue position, one-turn-per-message rule, or consumption acknowledgement.
+`observed: false` explicitly means unverified.
 The bridge queues ordinary prompt text. It does not answer permission dialogs,
 select a structured question's choice, or execute `/model`, `/stop` and other
 slash commands. Use the agents peek panel or attach for those interactions.
