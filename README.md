@@ -62,7 +62,7 @@ The skill folders are under **`skills/` inside this checkout**. Use the app's Sk
 | **Research and knowledge** | [Research assistant](skills/research-assistant/) · [Notion](skills/notion/) · [Obsidian](skills/obsidian/) · [Weather](skills/weather/) |
 | **Email and workspace** | [Google Workspace](skills/gws/) · [Outlook](skills/outlook/) · [Outlook web fallback](skills/outlook-web/) · [Himalaya](skills/himalaya/) · [Quip](skills/quip/) |
 | **Development** | [GitHub](skills/github/) · [Git](skills/git-tool/) · [Code search](skills/code-search-tool/) · [Shell execution](skills/exec-tool/) · [Web fetch](skills/web-fetch-tool/) · [Browser](skills/browser-tool/) · [Electron](skills/electron/) |
-| **Coding agents** | [Coding agent](skills/coding-agent/) · [Claude Code](skills/claude-code/) · [Codex CLI](skills/codex-cli/) · [Gemini](skills/gemini/) · [Gemini CLI](skills/gemini-cli/) · [Skill creator](skills/skill-creator/) |
+| **Coding agents** | [Coding agent](skills/coding-agent/) · [Claude Code](skills/claude-code/) · [Codex CLI](skills/codex-cli/) · [Antigravity CLI](skills/antigravity-cli/) · [Gemini](skills/gemini/) · [Gemini CLI](skills/gemini-cli/) · [Skill creator](skills/skill-creator/) |
 | **Media and audio** | [Spotify](skills/spotify/) · [Spotify player](skills/spotify-player/) · [Sonos](skills/sonos/) · [Video frames](skills/video-frames/) · [YouTube transcript](skills/youtube-transcript/) · [Local text-to-speech](skills/sherpa-onnx-tts/) |
 | **Automation and experiments** | [Voice calls](skills/voice-call/) · [tmux](skills/tmux/) · [Autoresearch](skills/autoresearch/) · [Healthcheck](skills/healthcheck/) |
 
